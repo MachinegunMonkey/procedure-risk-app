@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState } from "react";
 
 const procedures = [
@@ -50,6 +49,14 @@ const initial = {
   surgRelation: "",
   freshOperativeSite: "",
   postOpComplication: "",
+  oxygenNeed: "",
+  copdSeverity: "",
+  heartFailureSeverity: "",
+  canLayFlat: "",
+  sedationPlan: "local only",
+  airwayRisk: "",
+  willChangeManagement: "yes",
+  canDelay: "yes",
   notes: "",
 };
 
@@ -350,7 +357,69 @@ function complexityScore(f) {
   return { score: x, band: riskBand(x), why: why.join(" ") };
 }
 
-function toleranceScore(f, cx) {
+function cardiopulmonarySedationAssessment(f) {
+  let score = 1;
+  const why = [];
+  const suggestions = [];
+
+  if (f.oxygenNeed === "yes") {
+    score = Math.max(score, 5);
+    why.push("Baseline oxygen requirement.");
+    suggestions.push("Reassess monitoring and whether sedation level can be reduced.");
+  }
+
+  if (f.copdSeverity === "severe") {
+    score = Math.max(score, 7);
+    why.push("Severe COPD.");
+  } else if (f.copdSeverity === "moderate") {
+    score = Math.max(score, 5);
+    why.push("Moderate COPD.");
+  }
+
+  if (f.heartFailureSeverity === "severe") {
+    score = Math.max(score, 7);
+    why.push("Severe heart failure.");
+  } else if (f.heartFailureSeverity === "moderate") {
+    score = Math.max(score, 5);
+    why.push("Moderate heart failure.");
+  }
+
+  if (f.canLayFlat === "no") {
+    score = Math.max(score, 7);
+    why.push("Cannot tolerate lying flat.");
+    suggestions.push("Consider whether positioning changes or alternate approach are needed.");
+  } else if (f.canLayFlat === "partially") {
+    score = Math.max(score, 4);
+    why.push("Limited tolerance of flat positioning.");
+  }
+
+  if (f.airwayRisk === "high") {
+    score = Math.max(score, 8);
+    why.push("High airway risk.");
+    suggestions.push("High airway risk should influence sedation planning and monitoring.");
+  } else if (f.airwayRisk === "moderate") {
+    score = Math.max(score, 5);
+    why.push("Moderate airway risk.");
+  }
+
+  if (f.sedationPlan === "moderate sedation") {
+    score = Math.max(score, score + 1, 3);
+    why.push("Moderate sedation planned.");
+  } else if (f.sedationPlan === "deep sedation / anesthesia") {
+    score = Math.max(score, score + 2, 5);
+    why.push("Deep sedation / anesthesia planned.");
+    suggestions.push("Consider whether a lower sedation strategy is feasible.");
+  }
+
+  return {
+    score: clamp(score, 1, 10),
+    band: riskBand(clamp(score, 1, 10)),
+    why: why.length ? why.join(" ") : "No major cardiopulmonary / sedation issue entered.",
+    suggestions,
+  };
+}
+
+function toleranceScore(f, cx, cps) {
   const age = toNum(f.age);
   const frailty = frailtyUsed(f).score;
   const bmi = toNum(f.bmi);
@@ -365,6 +434,14 @@ function toleranceScore(f, cx) {
   } else if (cx >= 6) {
     x += 1;
     why.push("Moderate-high complexity adds burden.");
+  }
+
+  if (cps >= 8) {
+    x += 3;
+    why.push("Major cardiopulmonary / sedation burden.");
+  } else if (cps >= 5) {
+    x += 2;
+    why.push("Moderate cardiopulmonary / sedation burden.");
   }
 
   if (age !== null) {
@@ -680,7 +757,7 @@ function recentSurgeryAssessment(f) {
   }
 
   if (relation === "same operative field") {
-    score = Math.max(score, score + 1, 6);
+    score = Math.max(score, 6);
     why.push("Same operative field.");
     suggestions.push("Reassess whether additional healing time would materially improve safety.");
   } else if (relation === "adjacent region") {
@@ -716,7 +793,82 @@ function recentSurgeryAssessment(f) {
   };
 }
 
-function finalRecommendationEngine({ form, bleed, labBleed, complexity, tolerance, thrombotic, contrast, recentSurgery }) {
+function missingDataPrompts(f) {
+  const missing = [];
+
+  if (!f.procedure) missing.push("procedure");
+  if (!f.age) missing.push("age");
+  if (!f.bmi) missing.push("BMI");
+  if (!f.albumin) missing.push("albumin");
+  if (!f.platelets) missing.push("platelet count");
+  if (!f.inr) missing.push("INR");
+
+  if (["lung biopsy", "renal biopsy", "adrenal biopsy", "liver biopsy", "abscess drainage"].includes(f.procedure) && !f.sizeCm) {
+    missing.push("target / collection size");
+  }
+
+  if (f.procedure === "lung biopsy" && !f.emphysema) {
+    missing.push("emphysema severity in biopsy path");
+  }
+
+  if (f.contrastNeed !== "no" && !f.guidance) {
+    missing.push("guidance modality");
+  }
+
+  if (f.contrastNeed !== "no" && !f.intent) {
+    missing.push("procedure intent");
+  }
+
+  if (f.recentSurgery === "yes" && !f.surgDays) {
+    missing.push("days since surgery");
+  }
+
+  if (f.recentSurgery === "yes" && !f.surgRelation) {
+    missing.push("relation to operative field");
+  }
+
+  if (f.thromDrug && !f.thromIndication) {
+    missing.push("antithrombotic indication");
+  }
+
+  if (f.sedationPlan !== "local only" && !f.airwayRisk) {
+    missing.push("airway risk");
+  }
+
+  if (!f.canLayFlat) {
+    missing.push("ability to lie flat");
+  }
+
+  if (!f.willChangeManagement) {
+    missing.push("whether result will change management");
+  }
+
+  return missing;
+}
+
+function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, cps, form }) {
+  const items = [];
+
+  labBleed.suggestions.forEach((x) => items.push(x));
+  thrombotic.suggestions.forEach((x) => items.push(x));
+  contrast.suggestions.forEach((x) => items.push(x));
+  recentSurgery.suggestions.forEach((x) => items.push(x));
+  cps.suggestions.forEach((x) => items.push(x));
+
+  if (form.canDelay === "yes" && (labBleed.score >= 6 || recentSurgery.score >= 6)) {
+    items.push("Because delay is acceptable, short-interval optimization may improve safety.");
+  }
+
+  if (form.willChangeManagement === "no") {
+    items.push("Reassess whether the procedure should be done if the result will not change management.");
+  } else if (form.willChangeManagement === "uncertain") {
+    items.push("Clarify whether the result will materially change management.");
+  }
+
+  return [...new Set(items)];
+}
+
+function finalRecommendationEngine({ form, bleed, labBleed, complexity, tolerance, thrombotic, contrast, recentSurgery, cps, missing }) {
   const reasons = [];
 
   if (bleed.score >= 9) reasons.push("Procedure bleeding modifier is very high.");
@@ -729,6 +881,9 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
   if (tolerance.score >= 8) reasons.push("Procedure tolerance concern is very high.");
   else if (tolerance.score >= 6) reasons.push("Procedure tolerance concern is meaningful.");
 
+  if (cps.score >= 8) reasons.push("Cardiopulmonary / sedation burden is very high.");
+  else if (cps.score >= 5) reasons.push("Cardiopulmonary / sedation burden is moderate.");
+
   if (thrombotic.score >= 8) reasons.push("Holding antithrombotic therapy carries high thrombotic risk.");
   else if (thrombotic.score >= 5) reasons.push("Medication interruption creates a meaningful thrombosis tradeoff.");
 
@@ -738,12 +893,20 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
   if (recentSurgery.score >= 7) reasons.push("Recent surgery materially worsens timing and tissue safety.");
   else if (recentSurgery.score >= 4) reasons.push("Recent surgery adds procedural concern.");
 
+  if (missing.length >= 4) reasons.push("Important missing data could materially change the recommendation.");
+
   if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 0.8) {
     reasons.push("Very small lung target gives poor risk-benefit.");
   }
 
   if (form.procedure === "abscess drainage" && form.drainType === "liver abscess" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 2) {
     reasons.push("Small liver abscess may be more appropriate for medical therapy first.");
+  }
+
+  if (form.willChangeManagement === "no") {
+    reasons.push("Result is not expected to change management.");
+  } else if (form.willChangeManagement === "uncertain") {
+    reasons.push("Clinical utility remains uncertain.");
   }
 
   let title = "Proceed";
@@ -756,7 +919,8 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
     bleed.score >= 9 ||
     tolerance.score >= 9 ||
     labBleed.score >= 8 ||
-    recentSurgery.score >= 8
+    recentSurgery.score >= 8 ||
+    cps.score >= 8
   ) {
     title = "Delay / optimize first";
     subtitle = "Current risk profile is very unfavorable without mitigation or reassessment.";
@@ -766,10 +930,17 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
     complexity.score >= 8 ||
     labBleed.score >= 6 ||
     contrast.score >= 6 ||
-    recentSurgery.score >= 6
+    recentSurgery.score >= 6 ||
+    cps.score >= 6 ||
+    missing.length >= 4
   ) {
     title = "Proceed after optimization";
     subtitle = "Procedure may be reasonable, but optimization or planning adjustments should occur first.";
+  }
+
+  if (form.willChangeManagement === "no" && form.urgency !== "emergent") {
+    title = "Avoid / use alternative";
+    subtitle = "Entered data suggest limited procedural payoff because management is unlikely to change.";
   }
 
   if (form.urgency === "emergent") {
@@ -777,7 +948,7 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
     subtitle = "Emergent clinical benefit may outweigh several elevated risks.";
   }
 
-  return { title, subtitle, reasons: reasons.slice(0, 5) };
+  return { title, subtitle, reasons: reasons.slice(0, 6) };
 }
 
 export default function App() {
@@ -790,11 +961,14 @@ export default function App() {
     const frailty = frailtyUsed(form);
     const bleed = bleedingScore(form);
     const complexity = complexityScore(form);
-    const tolerance = toleranceScore(form, complexity.score);
+    const cps = cardiopulmonarySedationAssessment(form);
+    const tolerance = toleranceScore(form, complexity.score, cps.score);
     const labBleeding = labBleedingAssessment(form, bleed.score);
     const thrombotic = thromboticHoldRisk(form);
     const contrast = contrastAssessment(form);
     const recentSurgery = recentSurgeryAssessment(form);
+    const missing = missingDataPrompts(form);
+    const checklist = optimizationChecklist({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, form });
     const finalRec = finalRecommendationEngine({
       form,
       bleed,
@@ -804,9 +978,24 @@ export default function App() {
       thrombotic,
       contrast,
       recentSurgery,
+      cps,
+      missing,
     });
 
-    return { frailty, bleed, complexity, tolerance, labBleeding, thrombotic, contrast, recentSurgery, finalRec };
+    return {
+      frailty,
+      bleed,
+      complexity,
+      cps,
+      tolerance,
+      labBleeding,
+      thrombotic,
+      contrast,
+      recentSurgery,
+      missing,
+      checklist,
+      finalRec,
+    };
   }, [form]);
 
   const report = useMemo(() => {
@@ -816,6 +1005,10 @@ export default function App() {
       `Summary: ${result.finalRec.subtitle}`,
       `Top reasons:`,
       ...(result.finalRec.reasons.length ? result.finalRec.reasons.map((x) => `- ${x}`) : ["- none"]),
+      `Missing data prompts:`,
+      ...(result.missing.length ? result.missing.map((x) => `- ${x}`) : ["- none"]),
+      `Optimization checklist:`,
+      ...(result.checklist.length ? result.checklist.map((x) => `- ${x}`) : ["- none"]),
       `Frailty helper result: ${helperScore}/10 (${frailtyLabel(helperScore)})`,
       `Frailty used in model: ${result.frailty.score}/10 (${result.frailty.source})`,
       `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
@@ -824,6 +1017,8 @@ export default function App() {
       `Lab bleeding basis: ${result.labBleeding.why}`,
       `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
       `Complexity basis: ${result.complexity.why}`,
+      `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
+      `Cardiopulmonary / sedation basis: ${result.cps.why}`,
       `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
       `Tolerance basis: ${result.tolerance.why}`,
       `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
@@ -833,14 +1028,6 @@ export default function App() {
       `Contrast basis: ${result.contrast.why}`,
       `Recent surgery concern: ${result.recentSurgery.score}/10 (${result.recentSurgery.band})`,
       `Recent surgery basis: ${result.recentSurgery.why}`,
-      `Hold suggestions:`,
-      ...(result.thrombotic.suggestions.length ? result.thrombotic.suggestions.map((x) => `- ${x}`) : ["- none"]),
-      `Contrast suggestions:`,
-      ...(result.contrast.suggestions.length ? result.contrast.suggestions.map((x) => `- ${x}`) : ["- none"]),
-      `Recent surgery suggestions:`,
-      ...(result.recentSurgery.suggestions.length ? result.recentSurgery.suggestions.map((x) => `- ${x}`) : ["- none"]),
-      `Lab optimization suggestions:`,
-      ...(result.labBleeding.suggestions.length ? result.labBleeding.suggestions.map((x) => `- ${x}`) : ["- none"]),
       `Notes: ${form.notes || "none"}`,
     ].join("\n");
   }, [form, result, helperScore]);
@@ -881,7 +1068,15 @@ export default function App() {
       surgDays: "10",
       surgRelation: "adjacent region",
       freshOperativeSite: "no",
-      postOpComplication: "none / unknown",
+      postOpComplication: "",
+      oxygenNeed: "yes",
+      copdSeverity: "moderate",
+      heartFailureSeverity: "",
+      canLayFlat: "partially",
+      sedationPlan: "moderate sedation",
+      airwayRisk: "moderate",
+      willChangeManagement: "yes",
+      canDelay: "yes",
     });
   };
 
@@ -909,7 +1104,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added contrast logic, recent surgery modifiers, and a stronger final recommendation engine.
+            Added missing-data prompts, optimization checklist, and cardiopulmonary / sedation inputs.
           </p>
         </div>
 
@@ -946,6 +1141,23 @@ export default function App() {
 
                 <Field label="Size (cm)">
                   <input value={form.sizeCm} onChange={(e) => update("sizeCm", e.target.value)} style={inputStyle()} />
+                </Field>
+              </div>
+
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <Field label="Will result change management?">
+                  <select value={form.willChangeManagement} onChange={(e) => update("willChangeManagement", e.target.value)} style={inputStyle()}>
+                    <option value="yes">yes</option>
+                    <option value="uncertain">uncertain</option>
+                    <option value="no">no</option>
+                  </select>
+                </Field>
+
+                <Field label="Can delay for optimization?">
+                  <select value={form.canDelay} onChange={(e) => update("canDelay", e.target.value)} style={inputStyle()}>
+                    <option value="yes">yes</option>
+                    <option value="no">no</option>
+                  </select>
                 </Field>
               </div>
 
@@ -1203,6 +1415,64 @@ export default function App() {
               </div>
             </div>
 
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Sedation / cardiopulmonary</h2>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <Field label="Sedation plan">
+                  <select value={form.sedationPlan} onChange={(e) => update("sedationPlan", e.target.value)} style={inputStyle()}>
+                    <option value="local only">local only</option>
+                    <option value="minimal sedation">minimal sedation</option>
+                    <option value="moderate sedation">moderate sedation</option>
+                    <option value="deep sedation / anesthesia">deep sedation / anesthesia</option>
+                  </select>
+                </Field>
+
+                <Field label="Airway risk">
+                  <select value={form.airwayRisk} onChange={(e) => update("airwayRisk", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="low">low</option>
+                    <option value="moderate">moderate</option>
+                    <option value="high">high</option>
+                  </select>
+                </Field>
+
+                <Field label="Needs oxygen?">
+                  <select value={form.oxygenNeed} onChange={(e) => update("oxygenNeed", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="no">no</option>
+                    <option value="yes">yes</option>
+                  </select>
+                </Field>
+
+                <Field label="COPD severity">
+                  <select value={form.copdSeverity} onChange={(e) => update("copdSeverity", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="mild">mild</option>
+                    <option value="moderate">moderate</option>
+                    <option value="severe">severe</option>
+                  </select>
+                </Field>
+
+                <Field label="Heart failure severity">
+                  <select value={form.heartFailureSeverity} onChange={(e) => update("heartFailureSeverity", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="mild">mild</option>
+                    <option value="moderate">moderate</option>
+                    <option value="severe">severe</option>
+                  </select>
+                </Field>
+
+                <Field label="Can lie flat?">
+                  <select value={form.canLayFlat} onChange={(e) => update("canLayFlat", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="yes">yes</option>
+                    <option value="partially">partially</option>
+                    <option value="no">no</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+
             {showDetailed && (
               <div style={cardStyle()}>
                 <h2 style={{ marginTop: 0 }}>Notes</h2>
@@ -1229,16 +1499,34 @@ export default function App() {
             </div>
 
             <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Missing data prompts</h2>
+              <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                {(result.missing.length ? result.missing : ["No major missing data prompt triggered."]).map((x) => (
+                  <li key={x}>{x}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Optimization checklist</h2>
+              <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                {(result.checklist.length ? result.checklist : ["No major optimization item identified."]).map((x) => (
+                  <li key={x}>{x}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Quick output</h2>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
                 <QuickStat title="Proc bleed" value={`${result.bleed.score}/10`} detail={result.bleed.band} />
                 <QuickStat title="Lab bleed" value={`${result.labBleeding.score}/10`} detail={result.labBleeding.band} />
                 <QuickStat title="Complexity" value={`${result.complexity.score}/10`} detail={result.complexity.band} />
+                <QuickStat title="Cardiopulm" value={`${result.cps.score}/10`} detail={result.cps.band} />
                 <QuickStat title="Tolerance" value={`${result.tolerance.score}/10`} detail={result.tolerance.band} />
                 <QuickStat title="Thrombotic hold" value={`${result.thrombotic.score}/10`} detail={result.thrombotic.band} />
                 <QuickStat title="Contrast" value={`${result.contrast.score}/10`} detail={result.contrast.band} />
                 <QuickStat title="Recent surgery" value={`${result.recentSurgery.score}/10`} detail={result.recentSurgery.band} />
-                <QuickStat title="Frailty used" value={`${result.frailty.score}/10`} detail={result.frailty.source} />
               </div>
             </div>
 
@@ -1281,64 +1569,15 @@ export default function App() {
               </div>
 
               <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Cardiopulmonary / sedation concern</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.cps.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.cps.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure tolerance score</div>
                 <div style={{ fontSize: 34, fontWeight: 800 }}>{result.tolerance.score}/10</div>
                 <div style={{ color: "#64748b" }}>{result.tolerance.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Thrombotic hold risk</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.thrombotic.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.thrombotic.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Contrast concern</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.contrast.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.contrast.why}</div>
-                <div style={{ marginTop: 4, color: "#334155" }}><strong>Suggested pathway:</strong> {result.contrast.pathway}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Recent surgery concern</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.recentSurgery.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.recentSurgery.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Hold suggestions</div>
-                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.thrombotic.suggestions.length ? result.thrombotic.suggestions : ["No hold suggestion available."]).map((x) => (
-                    <li key={x}>{x}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Contrast suggestions</div>
-                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.contrast.suggestions.length ? result.contrast.suggestions : ["No contrast suggestion available."]).map((x) => (
-                    <li key={x}>{x}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Recent surgery suggestions</div>
-                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.recentSurgery.suggestions.length ? result.recentSurgery.suggestions : ["No recent-surgery suggestion available."]).map((x) => (
-                    <li key={x}>{x}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Lab optimization suggestions</div>
-                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.labBleeding.suggestions.length ? result.labBleeding.suggestions : ["No lab optimization suggestion."]).map((x) => (
-                    <li key={x}>{x}</li>
-                  ))}
-                </ul>
               </div>
             </div>
 
