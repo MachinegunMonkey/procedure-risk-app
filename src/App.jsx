@@ -237,8 +237,8 @@ function bleedingScore(f) {
     x = 6;
     why.push("Nephrostomy baseline 6.");
   } else if (p === "liver biopsy") {
-    x = 6;
-    why.push("Liver biopsy baseline 6.");
+    x = 5;
+    why.push("Liver biopsy has moderate intrinsic bleeding risk.");
   } else if (p === "renal biopsy") {
     if (t === "parenchyma") {
       x = 8;
@@ -255,42 +255,37 @@ function bleedingScore(f) {
     }
   } else if (p === "adrenal biopsy") {
     if (s !== null && s >= 2) {
-      x = 7;
+      x = 6;
       why.push("Adrenal mass ≥2 cm.");
     } else if (s !== null && s >= 1.2) {
       x = 7;
       why.push("Adrenal mass between 1.2 and <2 cm.");
     } else {
-      x = 8;
-      why.push("Small adrenal mass has high intrinsic bleeding risk.");
+      x = 7;
+      why.push("Small adrenal mass has moderately high intrinsic bleeding risk.");
     }
   } else if (p === "lung biopsy") {
-    x = 6;
-    why.push("Lung biopsy baseline 6.");
+    x = 3;
+    why.push("Lung biopsy has relatively low intrinsic bleeding risk; hemostatic factors usually matter more than target size.");
 
     if (s !== null) {
-      if (s >= 2.5) {
-        why.push("Target ≥2.5 cm is favorable for access and yield, but size itself does not materially reduce bleeding risk.");
-      } else if (s >= 1.5) {
-        why.push("Target 1.5–2.4 cm does not materially change bleeding risk.");
+      if (s >= 2.0) {
+        why.push("Target size does not materially change intrinsic bleeding risk.");
       } else if (s >= 1.0) {
-        why.push("Target 1.0–1.4 cm mainly affects technical difficulty and diagnostic yield rather than bleeding.");
-      } else if (s >= 0.8) {
-        why.push("Target 0.8–0.9 cm mainly affects technical difficulty and diagnostic yield rather than bleeding.");
+        why.push("Smaller target mainly affects technical difficulty and diagnostic yield rather than bleeding.");
       } else {
-        why.push("Target <0.8 cm has poor risk-benefit, but size itself does not strongly increase bleeding.");
+        why.push("Very small target mainly worsens technical difficulty and risk-benefit rather than intrinsic bleeding.");
       }
     }
 
     if (em === "mild") {
-      x += 1;
       why.push("Mild emphysema along biopsy tract.");
     } else if (em === "moderate") {
-      x += 2;
-      why.push("Moderate emphysema along biopsy tract.");
+      x += 1;
+      why.push("Moderate emphysema along biopsy tract slightly increases bleeding risk.");
     } else if (em === "severe") {
-      x += 3;
-      why.push("Severe emphysema along biopsy tract.");
+      x += 2;
+      why.push("Severe emphysema along biopsy tract increases bleeding risk.");
     } else if (em === "none") {
       why.push("No emphysema identified along biopsy tract.");
     }
@@ -324,39 +319,58 @@ function complexityScore(f) {
   } else if (p === "nephrostomy placement") x = 6;
   else if (p === "liver biopsy") x = 5;
   else if (p === "renal biopsy") x = f.targetType === "parenchyma" ? 9 : 7;
-  else if (p === "adrenal biopsy") x = 8;
-  else if (p === "lung biopsy") x = 7;
+  else if (p === "adrenal biopsy") x = 7;
+  else if (p === "lung biopsy") x = 4;
 
   if (s !== null && p !== "abscess drainage" && f.targetType !== "parenchyma") {
-    if (s >= 2.5) {
-      why.push("Target ≥2.5 cm is technically favorable.");
-    } else if (s >= 2.0) {
-      why.push("Target 2.0–2.4 cm remains fairly favorable.");
-    } else if (s >= 1.5) {
-      x += 1;
-      why.push("Target 1.5–1.9 cm mildly increases technical difficulty.");
-    } else if (s >= 1.0) {
-      x += 2;
-      why.push("Target 1.0–1.4 cm is clearly more difficult.");
-    } else if (s >= 0.8) {
-      x += 3;
-      why.push("Target 0.8–0.9 cm is technically difficult.");
+    if (p === "lung biopsy") {
+      if (s >= 2.5) {
+        why.push("Target ≥2.5 cm is technically favorable.");
+      } else if (s >= 2.0) {
+        why.push("Target 2.0–2.4 cm remains favorable.");
+      } else if (s >= 1.5) {
+        x += 1;
+        why.push("Target 1.5–1.9 cm mildly increases technical difficulty.");
+      } else if (s >= 1.0) {
+        x += 2;
+        why.push("Target 1.0–1.4 cm moderately increases technical difficulty.");
+      } else if (s >= 0.8) {
+        x += 3;
+        why.push("Target 0.8–0.9 cm is technically difficult.");
+      } else {
+        x += 5;
+        why.push("Target <0.8 cm is very technically difficult.");
+      }
     } else {
-      x += 4;
-      why.push("Target <0.8 cm is very technically difficult.");
+      if (s >= 2.5) {
+        why.push("Target ≥2.5 cm is technically favorable.");
+      } else if (s >= 2.0) {
+        why.push("Target 2.0–2.4 cm remains fairly favorable.");
+      } else if (s >= 1.5) {
+        x += 1;
+        why.push("Target 1.5–1.9 cm mildly increases technical difficulty.");
+      } else if (s >= 1.0) {
+        x += 2;
+        why.push("Target 1.0–1.4 cm is clearly more difficult.");
+      } else if (s >= 0.8) {
+        x += 3;
+        why.push("Target 0.8–0.9 cm is technically difficult.");
+      } else {
+        x += 4;
+        why.push("Target <0.8 cm is very technically difficult.");
+      }
     }
   }
 
   if (p === "lung biopsy") {
     if (em === "mild") {
-      x += 1;
-      why.push("Mild emphysema increases technical difficulty.");
+      why.push("Mild emphysema does not materially change technical complexity.");
     } else if (em === "moderate") {
-      x += 2;
+      x += 1;
       why.push("Moderate emphysema increases technical difficulty.");
     } else if (em === "severe") {
-      x += 3;
-      why.push("Severe emphysema increases technical difficulty.");
+      x += 2;
+      why.push("Severe emphysema substantially increases technical difficulty.");
     } else if (em === "none") {
       why.push("No emphysema-related technical penalty.");
     }
@@ -451,39 +465,37 @@ function pneumothoraxRiskScore(f) {
     };
   }
 
-  let x = 3;
+  let x = 2;
   const why = ["Lung biopsy has intrinsic pneumothorax risk."];
 
   if (s !== null) {
     if (s >= 2.5) {
       why.push("Target ≥2.5 cm is favorable.");
     } else if (s >= 2.0) {
-      x += 1;
-      why.push("Target 2.0–2.4 cm is mildly less favorable.");
+      why.push("Target 2.0–2.4 cm remains favorable.");
     } else if (s >= 1.5) {
-      x += 2;
-      why.push("Target 1.5–1.9 cm increases pneumothorax risk modestly.");
+      x += 1;
+      why.push("Target 1.5–1.9 cm modestly increases pneumothorax risk.");
     } else if (s >= 1.0) {
-      x += 3;
+      x += 2;
       why.push("Target 1.0–1.4 cm clearly increases pneumothorax risk.");
     } else if (s >= 0.8) {
-      x += 4;
+      x += 3;
       why.push("Target 0.8–0.9 cm has high pneumothorax risk.");
     } else {
-      x += 5;
+      x += 4;
       why.push("Target <0.8 cm has very high pneumothorax and failure risk.");
     }
   }
 
   if (em === "mild") {
-    x += 1;
     why.push("Mild emphysema along biopsy tract.");
   } else if (em === "moderate") {
-    x += 2;
-    why.push("Moderate emphysema along biopsy tract.");
+    x += 1;
+    why.push("Moderate emphysema along biopsy tract increases pneumothorax risk.");
   } else if (em === "severe") {
-    x += 3;
-    why.push("Severe emphysema along biopsy tract.");
+    x += 2;
+    why.push("Severe emphysema along biopsy tract increases pneumothorax risk.");
   } else if (em === "none") {
     why.push("No emphysema along biopsy tract.");
   }
@@ -1021,8 +1033,8 @@ function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps
   if (yieldRisk.score >= 7) items.push("Reassess whether small target size justifies biopsy now.");
   else if (yieldRisk.score >= 5) items.push("Confirm that expected diagnostic yield is adequate.");
 
-  if (pneumoRisk.score >= 7) items.push("Reassess pneumothorax risk versus diagnostic value.");
-  else if (pneumoRisk.score >= 5) items.push("Plan around elevated pneumothorax risk.");
+  if (pneumoRisk.score >= 8) items.push("Reassess pneumothorax risk versus diagnostic value.");
+  else if (pneumoRisk.score >= 6) items.push("Plan around elevated pneumothorax risk.");
 
   if (contrast.score >= 6) items.push("Reduce contrast exposure or use an alternative pathway if feasible.");
   if (recentSurgery.score >= 6) items.push("Reassess timing relative to recent surgery and tissue healing.");
@@ -1112,7 +1124,7 @@ function finalRecommendationEngine({
   else if (yieldRisk.score >= 6) reasons.push("Diagnostic yield may be reduced by small target size.");
 
   if (pneumoRisk.score >= 8) reasons.push("Pneumothorax risk is very high.");
-  else if (pneumoRisk.score >= 6) reasons.push("Pneumothorax risk is meaningfully increased.");
+  else if (pneumoRisk.score >= 7) reasons.push("Pneumothorax risk is meaningfully increased.");
 
   if (tolerance.score >= 8) reasons.push("Procedure tolerance concern is very high.");
   else if (tolerance.score >= 6) reasons.push("Procedure tolerance concern is meaningful.");
@@ -1170,7 +1182,7 @@ function finalRecommendationEngine({
     tolerance.score >= 7 ||
     complexity.score >= 8 ||
     yieldRisk.score >= 7 ||
-    pneumoRisk.score >= 7 ||
+    pneumoRisk.score >= 8 ||
     labBleed.score >= 6 ||
     contrast.score >= 6 ||
     recentSurgery.score >= 6 ||
@@ -1321,8 +1333,8 @@ export default function App() {
       ...initial,
       procedure: "lung biopsy",
       targetType: "lung nodule",
-      sizeCm: "1.9",
-      emphysema: "moderate",
+      sizeCm: "2.0",
+      emphysema: "mild",
       age: "92",
       bmi: "41",
       albumin: "2.4",
@@ -1384,7 +1396,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Lowered bleeding baselines, kept renal parenchymal biopsy high, and separated small-lung-target risk into yield/failure and pneumothorax rather than bleeding.
+            New bleeding hierarchy: lung low intrinsic bleeding, liver intermediate, renal parenchymal highest. Lung bleeding is now driven more by hemostatic factors than by target size.
           </p>
         </div>
 
