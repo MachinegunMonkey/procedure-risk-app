@@ -25,6 +25,9 @@ const initial = {
   age: "",
   bmi: "",
   albumin: "",
+  platelets: "",
+  inr: "",
+  egfr: "",
   frailtyOverride: "",
   frailtyIndependence: "0",
   frailtyMobility: "0",
@@ -32,6 +35,11 @@ const initial = {
   frailtyCognition: "0",
   frailtyNutrition: "0",
   frailtyEnergy: "0",
+  thromDrug: "",
+  thromIndication: "",
+  thromTiming: "",
+  dapt: "",
+  lastDoseHours: "",
   notes: "",
 };
 
@@ -43,13 +51,6 @@ function clamp(x, a, b) {
   return Math.max(a, Math.min(b, x));
 }
 
-function riskBand(score) {
-  if (score <= 2) return "low";
-  if (score <= 6) return "moderate";
-  if (score <= 8) return "high";
-  return "very high";
-}
-
 function frailtyLabel(score) {
   if (score <= 2) return "low frailty burden";
   if (score <= 4) return "mild frailty burden";
@@ -58,11 +59,96 @@ function frailtyLabel(score) {
   return "very high frailty burden";
 }
 
+function riskBand(score) {
+  if (score <= 2) return "low";
+  if (score <= 6) return "moderate";
+  if (score <= 8) return "high";
+  return "very high";
+}
+
 function badgeStyle(band) {
   if (band === "low") return { background: "#dcfce7", color: "#166534" };
   if (band === "moderate") return { background: "#fef3c7", color: "#92400e" };
   if (band === "high") return { background: "#fed7aa", color: "#9a3412" };
   return { background: "#fecaca", color: "#991b1b" };
+}
+
+function cardStyle() {
+  return {
+    background: "#fff",
+    border: "1px solid #dbe1ea",
+    borderRadius: 16,
+    padding: 16,
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+  };
+}
+
+function inputStyle() {
+  return {
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: "1px solid #cbd5e1",
+    fontSize: 16,
+    boxSizing: "border-box",
+    background: "#fff",
+  };
+}
+
+function labelStyle() {
+  return {
+    display: "block",
+    marginBottom: 6,
+    fontSize: 14,
+    fontWeight: 600,
+  };
+}
+
+function buttonStyle(primary = false) {
+  return {
+    width: "100%",
+    padding: "12px 14px",
+    borderRadius: 12,
+    border: primary ? "1px solid #2563eb" : "1px solid #cbd5e1",
+    background: primary ? "#2563eb" : "#fff",
+    color: primary ? "#fff" : "#0f172a",
+    fontWeight: 600,
+    fontSize: 15,
+    cursor: "pointer",
+  };
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={labelStyle()}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function QuickStat({ title, value, detail }) {
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>
+        {title}
+      </div>
+      <div style={{ marginTop: 6, fontSize: 30, fontWeight: 800 }}>{value}</div>
+      <span
+        style={{
+          display: "inline-block",
+          marginTop: 6,
+          padding: "4px 10px",
+          borderRadius: 999,
+          ...badgeStyle(detail),
+          fontSize: 12,
+          fontWeight: 700,
+        }}
+      >
+        {detail}
+      </span>
+    </div>
+  );
 }
 
 function frailtyHelperScore(f) {
@@ -73,15 +159,12 @@ function frailtyHelperScore(f) {
     Number(f.frailtyCognition || 0) +
     Number(f.frailtyNutrition || 0) +
     Number(f.frailtyEnergy || 0);
-
   return clamp(Math.round((raw / 20) * 10), 0, 10);
 }
 
 function frailtyUsed(f) {
   const override = toNum(f.frailtyOverride);
-  if (override !== null) {
-    return { score: override, source: "manual override" };
-  }
+  if (override !== null) return { score: override, source: "manual override" };
   return { score: frailtyHelperScore(f), source: "frailty helper" };
 }
 
@@ -115,9 +198,7 @@ function bleedingScore(f) {
     if (dr === "liver abscess") {
       x = 6;
       why.push("Liver abscess drainage baseline 6.");
-      if (s !== null && s < 2) {
-        why.push("Abscess under 2 cm may be less favorable for drainage.");
-      }
+      if (s !== null && s < 2) why.push("Abscess under 2 cm may be less favorable for drainage.");
     } else if (dr === "biliary drainage") {
       x = 6;
       why.push("Biliary drainage baseline 6.");
@@ -331,70 +412,157 @@ function toleranceScore(f, cx) {
   return { score: x, band: riskBand(x), why: why.join(" ") };
 }
 
-function cardStyle() {
+function labBleedingAssessment(f, procedureBleedScore) {
+  const platelets = toNum(f.platelets);
+  const inr = toNum(f.inr);
+  const egfr = toNum(f.egfr);
+
+  let score = 1;
+  const why = [];
+  const suggestions = [];
+
+  if (platelets !== null) {
+    if (platelets < 20) {
+      score = Math.max(score, 9);
+      why.push("Platelets under 20k strongly unfavorable.");
+      suggestions.push("Correct severe thrombocytopenia before higher-risk procedures.");
+    } else if (platelets < 50) {
+      score = Math.max(score, 7);
+      why.push("Platelets under 50k increase bleeding concern.");
+      suggestions.push("Consider platelet optimization depending on procedure class.");
+    } else if (platelets < 75) {
+      score = Math.max(score, 5);
+      why.push("Platelets 50k–74k create moderate concern.");
+    }
+  }
+
+  if (inr !== null) {
+    if (inr >= 2.5) {
+      score = Math.max(score, 8);
+      why.push("Marked INR elevation.");
+      suggestions.push("Correct INR if clinically appropriate before higher-risk procedures.");
+    } else if (inr >= 1.8) {
+      score = Math.max(score, 6);
+      why.push("Moderate INR elevation.");
+    } else if (inr >= 1.5 && procedureBleedScore >= 7) {
+      score = Math.max(score, 5);
+      why.push("Mild INR elevation matters more in higher-bleeding procedures.");
+    }
+  }
+
+  if (egfr !== null && egfr < 30) {
+    score = Math.max(score, 3);
+    why.push("Advanced renal dysfunction may worsen platelet function and medication clearance.");
+  }
+
   return {
-    background: "#fff",
-    border: "1px solid #dbe1ea",
-    borderRadius: 16,
-    padding: 16,
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    score,
+    band: riskBand(score),
+    why: why.length ? why.join(" ") : "No major lab-driven bleeding issue entered.",
+    suggestions,
   };
 }
 
-function inputStyle() {
+function thromboticHoldRisk(f) {
+  const drug = f.thromDrug;
+  const indication = f.thromIndication;
+  const timing = f.thromTiming;
+  const dapt = f.dapt;
+  const egfr = toNum(f.egfr);
+  const lastDoseHours = toNum(f.lastDoseHours);
+
+  let score = 1;
+  const why = [];
+  const suggestions = [];
+
+  if (!drug) {
+    return {
+      score: 1,
+      band: "low",
+      why: "No antithrombotic therapy entered.",
+      suggestions: ["No hold guidance needed unless therapy is added."],
+    };
+  }
+
+  if (indication === "mechanical heart valve") {
+    score = Math.max(score, 9);
+    why.push("Mechanical valve creates very high interruption risk.");
+  } else if (indication === "recent VTE (< 3 months)") {
+    score = Math.max(score, 8);
+    why.push("Recent VTE creates high interruption risk.");
+  } else if (indication === "recent arterial stent") {
+    score = Math.max(score, 8);
+    why.push("Recent arterial stent creates high interruption risk.");
+  } else if (indication === "other high-risk thrombosis") {
+    score = Math.max(score, 8);
+    why.push("High-risk thrombotic indication entered.");
+  } else if (indication === "atrial fibrillation") {
+    score = Math.max(score, 4);
+    why.push("Atrial fibrillation usually creates moderate interruption risk.");
+  } else if (indication === "older VTE") {
+    score = Math.max(score, 4);
+    why.push("Older VTE still creates some interruption risk.");
+  } else if (indication === "older arterial stent") {
+    score = Math.max(score, 4);
+    why.push("Older arterial stent creates lower but persistent interruption risk.");
+  } else if (indication === "CAD / stroke prevention") {
+    score = Math.max(score, 3);
+    why.push("Secondary prevention usually creates low-moderate interruption risk.");
+  } else {
+    score = Math.max(score, 3);
+    why.push("Drug entered but exact indication not specified.");
+  }
+
+  if (timing === "< 1 month") {
+    score = Math.max(score, 9);
+    why.push("Very recent event or stent.");
+  } else if (timing === "1 to 3 months") {
+    score = Math.max(score, 7);
+    why.push("Event or stent within 1–3 months.");
+  } else if (timing === "3 to 12 months") {
+    score = Math.max(score, 5);
+    why.push("Event or stent within 3–12 months.");
+  }
+
+  if (dapt === "yes") {
+    score = Math.max(score, 8);
+    why.push("Dual antiplatelet dependence increases hold risk.");
+  }
+
+  if (drug === "aspirin") {
+    suggestions.push("Aspirin often continued for lower/moderate bleeding-risk procedures; consider ~5 day hold for higher-risk procedures if appropriate.");
+  } else if (drug === "clopidogrel") {
+    suggestions.push("Clopidogrel commonly held about 5 days if interruption is acceptable.");
+  } else if (drug === "warfarin") {
+    suggestions.push("Warfarin commonly held about 5 days with INR check before procedure.");
+    if (score >= 8) suggestions.push("Because thrombotic risk is high, discuss bridging or alternatives with the prescribing team.");
+  } else if (drug === "apixaban") {
+    suggestions.push("Apixaban often held about 1 day for lower/moderate risk and ~2 days for higher bleeding risk.");
+    if (egfr !== null && egfr < 30) suggestions.push("Poor renal function may justify a more conservative DOAC hold.");
+  } else if (drug === "rivaroxaban") {
+    suggestions.push("Rivaroxaban often held about 1 day for lower/moderate risk and ~2 days for higher bleeding risk.");
+    if (egfr !== null && egfr < 30) suggestions.push("Poor renal function may justify a more conservative DOAC hold.");
+  } else if (drug === "dabigatran") {
+    suggestions.push("Dabigatran often held about 1–2 days; hold longer if renal function is reduced.");
+  } else if (drug === "UFH") {
+    suggestions.push("UFH commonly held about 4–6 hours.");
+  } else if (drug === "LMWH") {
+    suggestions.push("Therapeutic LMWH commonly held about 24 hours.");
+  } else if (drug === "aspirin + clopidogrel") {
+    suggestions.push("Recent stent / DAPT context should prompt prescribing-team discussion before interruption.");
+    suggestions.push("Clopidogrel commonly ~5 day hold if interruption acceptable; aspirin often continued depending on bleeding risk.");
+  }
+
+  if (lastDoseHours !== null) {
+    why.push(`Last dose entered as ${lastDoseHours} hours ago.`);
+  }
+
   return {
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid #cbd5e1",
-    fontSize: 16,
-    boxSizing: "border-box",
-    background: "#fff",
+    score,
+    band: riskBand(score),
+    why: why.join(" "),
+    suggestions,
   };
-}
-
-function labelStyle() {
-  return {
-    display: "block",
-    marginBottom: 6,
-    fontSize: 14,
-    fontWeight: 600,
-  };
-}
-
-function buttonStyle(primary = false) {
-  return {
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: primary ? "1px solid #2563eb" : "1px solid #cbd5e1",
-    background: primary ? "#2563eb" : "#fff",
-    color: primary ? "#fff" : "#0f172a",
-    fontWeight: 600,
-    fontSize: 15,
-    cursor: "pointer",
-  };
-}
-
-function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <label style={labelStyle()}>{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function QuickStat({ title, value, detail }) {
-  return (
-    <div style={{ border: "1px solid #e2e8f0", borderRadius: 14, padding: 14 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", color: "#64748b" }}>{title}</div>
-      <div style={{ marginTop: 6, fontSize: 30, fontWeight: 800 }}>{value}</div>
-      <span style={{ display: "inline-block", marginTop: 6, padding: "4px 10px", borderRadius: 999, ...badgeStyle(detail), fontSize: 12, fontWeight: 700 }}>
-        {detail}
-      </span>
-    </div>
-  );
 }
 
 export default function App() {
@@ -408,15 +576,22 @@ export default function App() {
     const bleed = bleedingScore(form);
     const complexity = complexityScore(form);
     const tolerance = toleranceScore(form, complexity.score);
+    const labBleeding = labBleedingAssessment(form, bleed.score);
+    const thrombotic = thromboticHoldRisk(form);
 
     const reasons = [];
-    if (bleed.score >= 9) reasons.push("Very high bleeding modifier.");
-    else if (bleed.score >= 7) reasons.push("High bleeding modifier.");
+    if (bleed.score >= 9) reasons.push("Very high procedure bleeding modifier.");
+    else if (bleed.score >= 7) reasons.push("High procedure bleeding modifier.");
+
+    if (labBleeding.score >= 7) reasons.push("Labs make bleeding risk materially worse.");
+    else if (labBleeding.score >= 5) reasons.push("Labs add moderate bleeding concern.");
 
     if (complexity.score >= 8) reasons.push("High technical complexity.");
-
     if (tolerance.score >= 8) reasons.push("Very poor expected procedure tolerance.");
     else if (tolerance.score >= 6) reasons.push("Moderate-high procedure tolerance concern.");
+
+    if (thrombotic.score >= 8) reasons.push("Holding antithrombotic therapy carries high thrombosis risk.");
+    else if (thrombotic.score >= 5) reasons.push("There is a meaningful thrombosis tradeoff if meds are held.");
 
     if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 0.8) {
       reasons.push("Very small target gives poor risk-benefit.");
@@ -432,10 +607,10 @@ export default function App() {
     if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 0.8) {
       title = "Avoid / use alternative";
       subtitle = "Very small target gives poor near-term procedural payoff.";
-    } else if (bleed.score >= 9 || tolerance.score >= 9) {
+    } else if (bleed.score >= 9 || tolerance.score >= 9 || labBleeding.score >= 8) {
       title = "Delay / optimize first";
       subtitle = "Current risk profile is very unfavorable without additional mitigation.";
-    } else if (bleed.score >= 7 || tolerance.score >= 7 || complexity.score >= 8) {
+    } else if (bleed.score >= 7 || tolerance.score >= 7 || complexity.score >= 8 || labBleeding.score >= 6) {
       title = "Proceed after optimization";
       subtitle = "Procedure may be reasonable, but optimization should occur first.";
     }
@@ -445,7 +620,7 @@ export default function App() {
       subtitle = "Emergent benefit may outweigh several elevated risks.";
     }
 
-    return { frailty, bleed, complexity, tolerance, title, subtitle, reasons };
+    return { frailty, bleed, complexity, tolerance, labBleeding, thrombotic, title, subtitle, reasons };
   }, [form]);
 
   const report = useMemo(() => {
@@ -455,12 +630,20 @@ export default function App() {
       `Summary: ${result.subtitle}`,
       `Frailty helper result: ${helperScore}/10 (${frailtyLabel(helperScore)})`,
       `Frailty used in model: ${result.frailty.score}/10 (${result.frailty.source})`,
-      `Bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
-      `Bleeding basis: ${result.bleed.why}`,
+      `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
+      `Procedure bleeding basis: ${result.bleed.why}`,
+      `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
+      `Lab bleeding basis: ${result.labBleeding.why}`,
       `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
       `Complexity basis: ${result.complexity.why}`,
       `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
       `Tolerance basis: ${result.tolerance.why}`,
+      `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
+      `Thrombotic basis: ${result.thrombotic.why}`,
+      `Hold suggestions:`,
+      ...(result.thrombotic.suggestions.length ? result.thrombotic.suggestions.map((x) => `- ${x}`) : ["- none"]),
+      `Lab optimization suggestions:`,
+      ...(result.labBleeding.suggestions.length ? result.labBleeding.suggestions.map((x) => `- ${x}`) : ["- none"]),
       `Notes: ${form.notes || "none"}`,
     ].join("\n");
   }, [form, result, helperScore]);
@@ -479,12 +662,20 @@ export default function App() {
       age: "92",
       bmi: "41",
       albumin: "2.4",
+      platelets: "68",
+      inr: "1.7",
+      egfr: "34",
       frailtyIndependence: "2",
       frailtyMobility: "3",
       frailtyFalls: "1",
       frailtyCognition: "1",
       frailtyNutrition: "2",
       frailtyEnergy: "2",
+      thromDrug: "aspirin + clopidogrel",
+      thromIndication: "recent arterial stent",
+      thromTiming: "1 to 3 months",
+      dapt: "yes",
+      lastDoseHours: "18",
     });
   };
 
@@ -512,7 +703,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Stable base with restored frailty helper, bleeding modifier, complexity score, and tolerance score.
+            Stable base with labs, medication inputs, lab-driven bleeding concern, thrombotic hold risk, and hold suggestions.
           </p>
         </div>
 
@@ -608,17 +799,30 @@ export default function App() {
                   <input value={form.bmi} onChange={(e) => update("bmi", e.target.value)} style={inputStyle()} />
                 </Field>
 
-                {showDetailed && (
-                  <>
-                    <Field label="Albumin">
-                      <input value={form.albumin} onChange={(e) => update("albumin", e.target.value)} style={inputStyle()} />
-                    </Field>
+                <Field label="Albumin">
+                  <input value={form.albumin} onChange={(e) => update("albumin", e.target.value)} style={inputStyle()} />
+                </Field>
 
-                    <Field label="Manual frailty override (optional 0–10)">
-                      <input value={form.frailtyOverride} onChange={(e) => update("frailtyOverride", e.target.value)} style={inputStyle()} />
-                    </Field>
-                  </>
+                {showDetailed && (
+                  <Field label="Manual frailty override (optional 0–10)">
+                    <input value={form.frailtyOverride} onChange={(e) => update("frailtyOverride", e.target.value)} style={inputStyle()} />
+                  </Field>
                 )}
+              </div>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Labs</h2>
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <Field label="Platelets (k/µL)">
+                  <input value={form.platelets} onChange={(e) => update("platelets", e.target.value)} style={inputStyle()} />
+                </Field>
+                <Field label="INR">
+                  <input value={form.inr} onChange={(e) => update("inr", e.target.value)} style={inputStyle()} />
+                </Field>
+                <Field label="eGFR">
+                  <input value={form.egfr} onChange={(e) => update("egfr", e.target.value)} style={inputStyle()} />
+                </Field>
               </div>
             </div>
 
@@ -653,6 +857,64 @@ export default function App() {
               </div>
             </div>
 
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Antithrombotics</h2>
+
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <Field label="Drug">
+                  <select value={form.thromDrug} onChange={(e) => update("thromDrug", e.target.value)} style={inputStyle()}>
+                    <option value="">none</option>
+                    <option value="aspirin">aspirin</option>
+                    <option value="clopidogrel">clopidogrel</option>
+                    <option value="warfarin">warfarin</option>
+                    <option value="apixaban">apixaban</option>
+                    <option value="rivaroxaban">rivaroxaban</option>
+                    <option value="dabigatran">dabigatran</option>
+                    <option value="UFH">UFH</option>
+                    <option value="LMWH">LMWH</option>
+                    <option value="aspirin + clopidogrel">aspirin + clopidogrel</option>
+                  </select>
+                </Field>
+
+                <Field label="Indication">
+                  <select value={form.thromIndication} onChange={(e) => update("thromIndication", e.target.value)} style={inputStyle()}>
+                    <option value="">not specified</option>
+                    <option value="atrial fibrillation">atrial fibrillation</option>
+                    <option value="mechanical heart valve">mechanical heart valve</option>
+                    <option value="recent VTE (< 3 months)">recent VTE (&lt; 3 months)</option>
+                    <option value="older VTE">older VTE</option>
+                    <option value="recent arterial stent">recent arterial stent</option>
+                    <option value="older arterial stent">older arterial stent</option>
+                    <option value="CAD / stroke prevention">CAD / stroke prevention</option>
+                    <option value="other high-risk thrombosis">other high-risk thrombosis</option>
+                    <option value="other lower-risk indication">other lower-risk indication</option>
+                  </select>
+                </Field>
+
+                <Field label="Timing since event / stent">
+                  <select value={form.thromTiming} onChange={(e) => update("thromTiming", e.target.value)} style={inputStyle()}>
+                    <option value="">not specified</option>
+                    <option value="< 1 month">&lt; 1 month</option>
+                    <option value="1 to 3 months">1 to 3 months</option>
+                    <option value="3 to 12 months">3 to 12 months</option>
+                    <option value="> 12 months">&gt; 12 months</option>
+                  </select>
+                </Field>
+
+                <Field label="DAPT needed?">
+                  <select value={form.dapt} onChange={(e) => update("dapt", e.target.value)} style={inputStyle()}>
+                    <option value="">unknown</option>
+                    <option value="yes">yes</option>
+                    <option value="no">no</option>
+                  </select>
+                </Field>
+
+                <Field label="Last dose (hours ago)">
+                  <input value={form.lastDoseHours} onChange={(e) => update("lastDoseHours", e.target.value)} style={inputStyle()} />
+                </Field>
+              </div>
+            </div>
+
             {showDetailed && (
               <div style={cardStyle()}>
                 <h2 style={{ marginTop: 0 }}>Notes</h2>
@@ -672,9 +934,11 @@ export default function App() {
               <div style={{ marginTop: 6, color: "#64748b" }}>{result.subtitle}</div>
 
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", marginTop: 14 }}>
-                <QuickStat title="Bleeding" value={`${result.bleed.score}/10`} detail={result.bleed.band} />
+                <QuickStat title="Proc bleed" value={`${result.bleed.score}/10`} detail={result.bleed.band} />
+                <QuickStat title="Lab bleed" value={`${result.labBleeding.score}/10`} detail={result.labBleeding.band} />
                 <QuickStat title="Complexity" value={`${result.complexity.score}/10`} detail={result.complexity.band} />
                 <QuickStat title="Tolerance" value={`${result.tolerance.score}/10`} detail={result.tolerance.band} />
+                <QuickStat title="Thrombotic hold" value={`${result.thrombotic.score}/10`} detail={result.thrombotic.band} />
                 <QuickStat title="Frailty used" value={`${result.frailty.score}/10`} detail={result.frailty.source} />
               </div>
             </div>
@@ -702,16 +966,22 @@ export default function App() {
               <div style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 700 }}>Top reasons</div>
                 <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.reasons.length ? result.reasons : ["No dominant concern identified."]).slice(0, 3).map((x) => (
+                  {(result.reasons.length ? result.reasons : ["No dominant concern identified."]).slice(0, 4).map((x) => (
                     <li key={x}>{x}</li>
                   ))}
                 </ul>
               </div>
 
               <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Bleeding modifier</div>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure bleeding modifier</div>
                 <div style={{ fontSize: 34, fontWeight: 800 }}>{result.bleed.score}/10</div>
                 <div style={{ color: "#64748b" }}>{result.bleed.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Lab-driven bleeding concern</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.labBleeding.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.labBleeding.why}</div>
               </div>
 
               <div style={{ marginTop: 16 }}>
@@ -725,6 +995,30 @@ export default function App() {
                 <div style={{ fontSize: 34, fontWeight: 800 }}>{result.tolerance.score}/10</div>
                 <div style={{ color: "#64748b" }}>{result.tolerance.why}</div>
               </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Thrombotic hold risk</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.thrombotic.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.thrombotic.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Hold suggestions</div>
+                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                  {(result.thrombotic.suggestions.length ? result.thrombotic.suggestions : ["No hold suggestion available."]).map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Lab optimization suggestions</div>
+                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                  {(result.labBleeding.suggestions.length ? result.labBleeding.suggestions : ["No lab optimization suggestion."]).map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
 
             <div style={cardStyle()}>
@@ -734,7 +1028,7 @@ export default function App() {
                   Copy report
                 </button>
               </div>
-              <textarea readOnly value={report} style={{ ...inputStyle(), minHeight: 260 }} />
+              <textarea readOnly value={report} style={{ ...inputStyle(), minHeight: 320 }} />
             </div>
           </div>
         </div>
