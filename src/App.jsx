@@ -267,6 +267,7 @@ function bleedingScore(f) {
   } else if (p === "lung biopsy") {
     x = 8;
     why.push("Lung biopsy baseline 8.");
+
     if (s !== null && s >= 2) {
       x -= 2;
       why.push("Target ≥2 cm lowers risk.");
@@ -280,15 +281,18 @@ function bleedingScore(f) {
       x += 1;
       why.push("Target <2 cm raises risk.");
     }
+
     if (em === "mild") {
       x += 1;
-      why.push("Mild emphysema in biopsy tract.");
+      why.push("Mild emphysema along biopsy tract.");
     } else if (em === "moderate") {
       x += 2;
-      why.push("Moderate emphysema in biopsy tract.");
+      why.push("Moderate emphysema along biopsy tract.");
     } else if (em === "severe") {
       x += 3;
-      why.push("Severe emphysema in biopsy tract.");
+      why.push("Severe emphysema along biopsy tract.");
+    } else if (em === "none") {
+      why.push("No emphysema identified along biopsy tract.");
     }
   }
 
@@ -344,6 +348,8 @@ function complexityScore(f) {
     } else if (em === "severe") {
       x += 3;
       why.push("Severe emphysema increases technical difficulty.");
+    } else if (em === "none") {
+      why.push("No emphysema-related technical penalty.");
     }
   }
 
@@ -384,6 +390,8 @@ function cardiopulmonarySedationAssessment(f) {
   } else if (f.copdSeverity === "mild") {
     score = Math.max(score, 3);
     why.push("Mild COPD / emphysema.");
+  } else if (f.copdSeverity === "none") {
+    why.push("No COPD / emphysema.");
   }
 
   if (f.heartFailureSeverity === "severe") {
@@ -395,6 +403,8 @@ function cardiopulmonarySedationAssessment(f) {
   } else if (f.heartFailureSeverity === "mild") {
     score = Math.max(score, 3);
     why.push("Mild heart failure.");
+  } else if (f.heartFailureSeverity === "none") {
+    why.push("No heart failure.");
   }
 
   if (f.canLayFlat === "no") {
@@ -820,7 +830,9 @@ function missingDataPrompts(f) {
   if (["lung biopsy", "renal biopsy", "adrenal biopsy", "liver biopsy", "abscess drainage"].includes(f.procedure) && !f.sizeCm) {
     missing.push("target / collection size");
   }
-  if (f.procedure === "lung biopsy" && !f.emphysema) missing.push("emphysema severity in biopsy tract");
+  if (f.procedure === "lung biopsy" && !f.emphysema) {
+    missing.push("degree of emphysema along biopsy tract");
+  }
   if (f.contrastNeed !== "no" && !f.guidance) missing.push("guidance modality");
   if (f.contrastNeed !== "no" && !f.intent) missing.push("procedure intent");
   if (f.recentSurgery === "yes" && !f.surgDays) missing.push("days since surgery");
@@ -927,7 +939,7 @@ function pathwaySummary(f) {
     return {
       title: "Biopsy pathway summary",
       text:
-        "Biopsy decisions should emphasize lesion size, expected diagnostic yield, bleeding profile, emphysema in the biopsy tract when relevant, pulmonary / sedation tolerance, and whether pathology will meaningfully change management.",
+        "Biopsy decisions should emphasize lesion size, expected diagnostic yield, bleeding profile, emphysema along the biopsy tract when relevant, pulmonary / sedation tolerance, and whether pathology will meaningfully change management.",
     };
   }
 
@@ -1166,7 +1178,7 @@ export default function App() {
       freshOperativeSite: "no",
       postOpComplication: "",
       oxygenNeed: "yes",
-      copdSeverity: "moderate",
+      copdSeverity: "none",
       heartFailureSeverity: "none",
       canLayFlat: "partially",
       sedationPlan: "moderate sedation",
@@ -1200,7 +1212,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added procedure-specific targets, pathway summaries, concise vs detailed note export, and explicit none options.
+            Added explicit biopsy-tract emphysema analysis and clear none options.
           </p>
         </div>
 
@@ -1281,7 +1293,7 @@ export default function App() {
                   </div>
 
                   <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                    <Field label="Emphysema severity in biopsy tract">
+                    <Field label="Emphysema along biopsy tract">
                       <select value={form.emphysema} onChange={(e) => update("emphysema", e.target.value)} style={inputStyle()}>
                         <option value="">not entered</option>
                         <option value="none">none</option>
