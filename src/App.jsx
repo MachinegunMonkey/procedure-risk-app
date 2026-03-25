@@ -814,11 +814,7 @@ function missingDataPrompts(f) {
   if (["lung biopsy", "renal biopsy", "adrenal biopsy", "liver biopsy", "abscess drainage"].includes(f.procedure) && !f.sizeCm) {
     missing.push("target / collection size");
   }
-
-  if (f.procedure === "lung biopsy" && !f.emphysema) {
-    missing.push("emphysema severity in biopsy path");
-  }
-
+  if (f.procedure === "lung biopsy" && !f.emphysema) missing.push("emphysema severity in biopsy path");
   if (f.contrastNeed !== "no" && !f.guidance) missing.push("guidance modality");
   if (f.contrastNeed !== "no" && !f.intent) missing.push("procedure intent");
   if (f.recentSurgery === "yes" && !f.surgDays) missing.push("days since surgery");
@@ -834,7 +830,6 @@ function missingDataPrompts(f) {
 function sirThresholdWarnings(f, bleed, labBleed) {
   const warnings = [];
   const lowSir = ["skin / dermis procedure", "paracentesis", "thoracentesis", "venous access catheter", "chest tube placement"].includes(f.procedure);
-
   const platelets = toNum(f.platelets);
   const inr = toNum(f.inr);
 
@@ -853,7 +848,6 @@ function sirThresholdWarnings(f, bleed, labBleed) {
 
 function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, cps, form, missing }) {
   const items = [];
-
   labBleed.suggestions.forEach((x) => items.push(x));
   thrombotic.suggestions.forEach((x) => items.push(x));
   contrast.suggestions.forEach((x) => items.push(x));
@@ -863,13 +857,11 @@ function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, 
   if (form.canDelay === "yes" && (labBleed.score >= 6 || recentSurgery.score >= 6)) {
     items.push("Because delay is acceptable, short-interval optimization may improve safety.");
   }
-
   if (form.willChangeManagement === "no") {
     items.push("Reassess whether the procedure should be done if the result will not change management.");
   } else if (form.willChangeManagement === "uncertain") {
     items.push("Clarify whether the result will materially change management.");
   }
-
   if (missing.length >= 3) {
     items.push("Fill in missing decision-critical inputs before finalizing the plan.");
   }
@@ -887,17 +879,64 @@ function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps
   else if (thrombotic.score >= 5) items.push("Clarify medication hold strategy before the procedure.");
 
   if (contrast.score >= 6) items.push("Reduce contrast exposure or use an alternative pathway if feasible.");
-
   if (recentSurgery.score >= 6) items.push("Reassess timing relative to recent surgery and tissue healing.");
-
   if (cps.score >= 6) items.push("Lower sedation burden or improve cardiopulmonary readiness.");
-
   if (form.willChangeManagement === "uncertain") items.push("Clarify whether the result will change management.");
   if (form.willChangeManagement === "no") items.push("Reconsider the need for the procedure entirely.");
-
   if (missing.length >= 3) items.push("Complete missing decision-critical data.");
 
   return [...new Set(items)].slice(0, 3);
+}
+
+function procedureSpecificTargets(f) {
+  const platelets = toNum(f.platelets);
+  const inr = toNum(f.inr);
+  const items = [];
+
+  const lowSir = ["skin / dermis procedure", "paracentesis", "thoracentesis", "venous access catheter", "chest tube placement"].includes(f.procedure);
+
+  if (lowSir) {
+    items.push("Lower-SIR-class procedure: minor lab abnormalities may be less consequential than in high-risk biopsies.");
+    if (platelets !== null && platelets < 20) items.push("Platelets <20k remain concerning even for lower-risk procedures.");
+    if (inr !== null && inr >= 2.5) items.push("Marked INR elevation still deserves caution.");
+  } else {
+    items.push("Higher-SIR-class procedure: labs and medication strategy deserve closer scrutiny.");
+    if (platelets !== null && platelets < 50) items.push("Platelets <50k are especially concerning here.");
+    if (inr !== null && inr >= 1.8) items.push("INR ≥1.8 is especially concerning here.");
+  }
+
+  if (["renal biopsy", "adrenal biopsy", "liver biopsy", "lung biopsy"].includes(f.procedure)) {
+    items.push("Biopsy pathway: balance diagnostic yield against target size, access difficulty, and whether management will change.");
+  }
+
+  if (["abscess drainage", "nephrostomy placement", "paracentesis", "thoracentesis", "chest tube placement"].includes(f.procedure)) {
+    items.push("Drainage / access pathway: assess whether decompression, source control, or symptom relief justifies urgency.");
+  }
+
+  return items;
+}
+
+function pathwaySummary(f) {
+  if (["renal biopsy", "adrenal biopsy", "liver biopsy", "lung biopsy"].includes(f.procedure)) {
+    return {
+      title: "Biopsy pathway summary",
+      text:
+        "Biopsy decisions should emphasize lesion size, expected diagnostic yield, bleeding profile, pulmonary / sedation tolerance when relevant, and whether pathology will meaningfully change management.",
+    };
+  }
+
+  if (["abscess drainage", "nephrostomy placement", "paracentesis", "thoracentesis", "chest tube placement", "venous access catheter"].includes(f.procedure)) {
+    return {
+      title: "Drainage / access pathway summary",
+      text:
+        "Drainage / access decisions should emphasize immediate therapeutic benefit, technical feasibility, infection or obstruction control, tissue integrity, and whether the procedure can be done with less sedation or without contrast.",
+    };
+  }
+
+  return {
+    title: "Procedure pathway summary",
+    text: "Use the combined bleeding, technical, tolerance, medication, and timing profile to refine procedural value and safety.",
+  };
 }
 
 function finalRecommendationEngine({ form, bleed, labBleed, complexity, tolerance, thrombotic, contrast, recentSurgery, cps, missing }) {
@@ -983,9 +1022,52 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
   return { title, subtitle, reasons: reasons.slice(0, 6) };
 }
 
+function buildNotes(form, result, helperScore, noteMode) {
+  const concise = [
+    `Procedure: ${form.procedure}.`,
+    `Action: ${result.finalRec.title}.`,
+    `Reasoning: ${result.finalRec.subtitle}`,
+    `Top issues: ${result.finalRec.reasons.join(" ") || "No dominant concern identified."}`,
+    `Top modifiable items: ${result.modifiable.join(" ") || "None identified."}`,
+  ].join(" ");
+
+  const detailed = [
+    `Procedure: ${form.procedure}`,
+    `Action: ${result.finalRec.title}`,
+    `Summary: ${result.finalRec.subtitle}`,
+    `Top reasons:`,
+    ...(result.finalRec.reasons.length ? result.finalRec.reasons.map((x) => `- ${x}`) : ["- none"]),
+    `Top modifiable items:`,
+    ...(result.modifiable.length ? result.modifiable.map((x) => `- ${x}`) : ["- none"]),
+    `Missing data prompts:`,
+    ...(result.missing.length ? result.missing.map((x) => `- ${x}`) : ["- none"]),
+    `SIR / threshold warnings:`,
+    ...(result.sirWarnings.length ? result.sirWarnings.map((x) => `- ${x}`) : ["- none"]),
+    `Procedure-specific targets:`,
+    ...(result.targets.length ? result.targets.map((x) => `- ${x}`) : ["- none"]),
+    `${result.pathway.title}: ${result.pathway.text}`,
+    `Frailty helper result: ${helperScore}/10 (${frailtyLabel(helperScore)})`,
+    `Frailty used in model: ${result.frailty.score}/10 (${result.frailty.source})`,
+    `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
+    `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
+    `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
+    `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
+    `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
+    `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
+    `Contrast concern: ${result.contrast.score}/10 (${result.contrast.band})`,
+    `Recent surgery concern: ${result.recentSurgery.score}/10 (${result.recentSurgery.band})`,
+    `Optimization checklist:`,
+    ...(result.checklist.length ? result.checklist.map((x) => `- ${x}`) : ["- none"]),
+    `Notes: ${form.notes || "none"}`,
+  ].join("\n");
+
+  return noteMode === "concise" ? concise : detailed;
+}
+
 export default function App() {
   const [form, setForm] = useState(initial);
   const [showDetailed, setShowDetailed] = useState(false);
+  const [noteMode, setNoteMode] = useState("detailed");
 
   const helperScore = useMemo(() => frailtyHelperScore(form), [form]);
 
@@ -1003,6 +1085,8 @@ export default function App() {
     const sirWarnings = sirThresholdWarnings(form, bleed, labBleeding);
     const checklist = optimizationChecklist({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, form, missing });
     const modifiable = topModifiableItems({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, missing, form });
+    const targets = procedureSpecificTargets(form);
+    const pathway = pathwaySummary(form);
     const finalRec = finalRecommendationEngine({
       form,
       bleed,
@@ -1030,38 +1114,13 @@ export default function App() {
       sirWarnings,
       checklist,
       modifiable,
+      targets,
+      pathway,
       finalRec,
     };
   }, [form]);
 
-  const report = useMemo(() => {
-    return [
-      `Procedure: ${form.procedure}`,
-      `Action: ${result.finalRec.title}`,
-      `Summary: ${result.finalRec.subtitle}`,
-      `Top reasons:`,
-      ...(result.finalRec.reasons.length ? result.finalRec.reasons.map((x) => `- ${x}`) : ["- none"]),
-      `Top modifiable items:`,
-      ...(result.modifiable.length ? result.modifiable.map((x) => `- ${x}`) : ["- none"]),
-      `Missing data prompts:`,
-      ...(result.missing.length ? result.missing.map((x) => `- ${x}`) : ["- none"]),
-      `SIR / threshold warnings:`,
-      ...(result.sirWarnings.length ? result.sirWarnings.map((x) => `- ${x}`) : ["- none"]),
-      `Optimization checklist:`,
-      ...(result.checklist.length ? result.checklist.map((x) => `- ${x}`) : ["- none"]),
-      `Frailty helper result: ${helperScore}/10 (${frailtyLabel(helperScore)})`,
-      `Frailty used in model: ${result.frailty.score}/10 (${result.frailty.source})`,
-      `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
-      `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
-      `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
-      `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
-      `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
-      `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
-      `Contrast concern: ${result.contrast.score}/10 (${result.contrast.band})`,
-      `Recent surgery concern: ${result.recentSurgery.score}/10 (${result.recentSurgery.band})`,
-      `Notes: ${form.notes || "none"}`,
-    ].join("\n");
-  }, [form, result, helperScore]);
+  const report = useMemo(() => buildNotes(form, result, helperScore, noteMode), [form, result, helperScore, noteMode]);
 
   const update = (key, value) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -1135,7 +1194,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added explicit action box, top modifiable items, and SIR / threshold warnings.
+            Added procedure-specific targets, pathway summaries, and concise vs detailed note export.
           </p>
         </div>
 
@@ -1146,13 +1205,19 @@ export default function App() {
             <span style={{ fontWeight: 600, fontSize: 15 }}>Detailed view</span>
             <input type="checkbox" checked={showDetailed} onChange={(e) => setShowDetailed(e.target.checked)} />
           </div>
+          <div style={{ ...cardStyle(), padding: "12px 14px" }}>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 8 }}>Note export</div>
+            <select value={noteMode} onChange={(e) => setNoteMode(e.target.value)} style={inputStyle()}>
+              <option value="detailed">detailed note</option>
+              <option value="concise">concise note</option>
+            </select>
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
           <div style={{ display: "grid", gap: 16 }}>
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Procedure</h2>
-
               <Field label="Procedure">
                 <select value={form.procedure} onChange={(e) => update("procedure", e.target.value)} style={inputStyle()}>
                   {procedures.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -1476,36 +1541,40 @@ export default function App() {
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Top 3 modifiable items</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                {(result.modifiable.length ? result.modifiable : ["No major modifiable item identified."]).map((x) => (
-                  <li key={x}>{x}</li>
-                ))}
+                {(result.modifiable.length ? result.modifiable : ["No major modifiable item identified."]).map((x) => <li key={x}>{x}</li>)}
+              </ul>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>{result.pathway.title}</h2>
+              <div style={{ color: "#334155" }}>{result.pathway.text}</div>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Procedure-specific targets</h2>
+              <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                {(result.targets.length ? result.targets : ["No additional target prompt."]).map((x) => <li key={x}>{x}</li>)}
               </ul>
             </div>
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Missing data prompts</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                {(result.missing.length ? result.missing : ["No major missing data prompt triggered."]).map((x) => (
-                  <li key={x}>{x}</li>
-                ))}
+                {(result.missing.length ? result.missing : ["No major missing data prompt triggered."]).map((x) => <li key={x}>{x}</li>)}
               </ul>
             </div>
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>SIR / threshold warnings</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                {(result.sirWarnings.length ? result.sirWarnings : ["No major threshold warning triggered."]).map((x) => (
-                  <li key={x}>{x}</li>
-                ))}
+                {(result.sirWarnings.length ? result.sirWarnings : ["No major threshold warning triggered."]).map((x) => <li key={x}>{x}</li>)}
               </ul>
             </div>
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Optimization checklist</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                {(result.checklist.length ? result.checklist : ["No major optimization item identified."]).map((x) => (
-                  <li key={x}>{x}</li>
-                ))}
+                {(result.checklist.length ? result.checklist : ["No major optimization item identified."]).map((x) => <li key={x}>{x}</li>)}
               </ul>
             </div>
 
@@ -1524,69 +1593,10 @@ export default function App() {
             </div>
 
             <div style={cardStyle()}>
-              <h2 style={{ marginTop: 0 }}>Detailed output</h2>
-              <div>
-                <strong>SIR category:</strong>
-                <span
-                  style={{
-                    display: "inline-block",
-                    marginLeft: 8,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    ...badgeStyle(sirBand),
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  {sirBand}
-                </span>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Top reasons</div>
-                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                  {(result.finalRec.reasons.length ? result.finalRec.reasons : ["No dominant concern identified."]).map((x) => (
-                    <li key={x}>{x}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure bleeding modifier</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.bleed.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.bleed.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Lab-driven bleeding concern</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.labBleeding.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.labBleeding.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Complexity score</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.complexity.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.complexity.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Cardiopulmonary / sedation concern</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.cps.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.cps.why}</div>
-              </div>
-
-              <div style={{ marginTop: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure tolerance score</div>
-                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.tolerance.score}/10</div>
-                <div style={{ color: "#64748b" }}>{result.tolerance.why}</div>
-              </div>
-            </div>
-
-            <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Report</h2>
               <div style={{ marginBottom: 12 }}>
                 <button style={buttonStyle(true)} onClick={() => navigator.clipboard.writeText(report)}>
-                  Copy report
+                  Copy {noteMode === "concise" ? "concise" : "detailed"} note
                 </button>
               </div>
               <textarea readOnly value={report} style={{ ...inputStyle(), minHeight: 420 }} />
