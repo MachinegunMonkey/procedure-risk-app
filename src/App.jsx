@@ -210,47 +210,47 @@ function bleedingScore(f) {
     x = 2;
     why.push("Paracentesis baseline 2.");
   } else if (p === "thoracentesis") {
-    x = 4;
-    why.push("Thoracentesis baseline 4.");
+    x = 3;
+    why.push("Thoracentesis baseline 3.");
   } else if (p === "venous access catheter") {
     x = tun === "yes" ? 3 : 2;
     why.push(tun === "yes" ? "Tunneled venous catheter one level above non-tunneled." : "Non-tunneled venous catheter baseline 2.");
   } else if (p === "chest tube placement") {
-    x = tun === "yes" ? 4 : 2;
+    x = tun === "yes" ? 3 : 2;
     why.push(tun === "yes" ? "Tunneled chest tube one level above non-tunneled." : "Non-tunneled chest tube baseline 2.");
   } else if (p === "abscess drainage") {
     if (dr === "liver abscess") {
-      x = 6;
-      why.push("Liver abscess drainage baseline 6.");
+      x = 5;
+      why.push("Liver abscess drainage baseline 5.");
       if (s !== null && s < 2) why.push("Abscess under 2 cm may be less favorable for drainage.");
     } else if (dr === "biliary drainage") {
-      x = 6;
-      why.push("Biliary drainage baseline 6.");
-    } else if (dr === "gallbladder drainage") {
-      x = 6;
-      why.push("Gallbladder drainage baseline 6.");
-    } else {
       x = 5;
-      why.push("Other abscess drainage baseline 5.");
+      why.push("Biliary drainage baseline 5.");
+    } else if (dr === "gallbladder drainage") {
+      x = 5;
+      why.push("Gallbladder drainage baseline 5.");
+    } else {
+      x = 4;
+      why.push("Other abscess drainage baseline 4.");
     }
   } else if (p === "nephrostomy placement") {
-    x = 8;
-    why.push("Nephrostomy baseline 8.");
+    x = 6;
+    why.push("Nephrostomy baseline 6.");
   } else if (p === "liver biopsy") {
-    x = 7;
-    why.push("Liver biopsy lower than kidney or adrenal.");
+    x = 6;
+    why.push("Liver biopsy baseline 6.");
   } else if (p === "renal biopsy") {
     if (t === "parenchyma") {
-      x = 10;
-      why.push("Renal parenchymal biopsy highest bleeding category.");
+      x = 8;
+      why.push("Renal parenchymal biopsy has high intrinsic bleeding risk.");
     } else if (s !== null && s >= 2) {
-      x = 7;
+      x = 6;
       why.push("Renal mass ≥2 cm.");
     } else if (s !== null && s >= 1.2) {
-      x = 8;
+      x = 7;
       why.push("Renal mass between 1.2 and <2 cm.");
     } else {
-      x = 9;
+      x = 8;
       why.push("Small renal mass approaches parenchymal-risk territory.");
     }
   } else if (p === "adrenal biopsy") {
@@ -258,30 +258,27 @@ function bleedingScore(f) {
       x = 7;
       why.push("Adrenal mass ≥2 cm.");
     } else if (s !== null && s >= 1.2) {
-      x = 8;
+      x = 7;
       why.push("Adrenal mass between 1.2 and <2 cm.");
     } else {
-      x = 9;
-      why.push("Small adrenal mass high bleeding concern.");
+      x = 8;
+      why.push("Small adrenal mass has high intrinsic bleeding risk.");
     }
   } else if (p === "lung biopsy") {
-    x = 8;
-    why.push("Lung biopsy baseline 8.");
+    x = 6;
+    why.push("Lung biopsy baseline 6.");
 
     if (s !== null) {
       if (s >= 2.5) {
-        x -= 1;
-        why.push("Target ≥2.5 cm is favorable for biopsy.");
+        why.push("Target ≥2.5 cm is favorable for access and yield, but size itself does not materially reduce bleeding risk.");
       } else if (s >= 1.5) {
-        why.push("Target 1.5–2.4 cm has no major additional bleeding penalty.");
+        why.push("Target 1.5–2.4 cm does not materially change bleeding risk.");
       } else if (s >= 1.0) {
-        why.push("Target 1.0–1.4 cm mainly affects technical difficulty and yield rather than bleeding.");
+        why.push("Target 1.0–1.4 cm mainly affects technical difficulty and diagnostic yield rather than bleeding.");
       } else if (s >= 0.8) {
-        x += 1;
-        why.push("Target 0.8–0.9 cm slightly increases overall procedural risk.");
+        why.push("Target 0.8–0.9 cm mainly affects technical difficulty and diagnostic yield rather than bleeding.");
       } else {
-        x += 1;
-        why.push("Target <0.8 cm has poor risk-benefit, though size itself does not strongly increase bleeding.");
+        why.push("Target <0.8 cm has poor risk-benefit, but size itself does not strongly increase bleeding.");
       }
     }
 
@@ -438,6 +435,60 @@ function diagnosticYieldScore(f) {
     }
   }
 
+  return { score: x, band: riskBand(x), why: why.join(" ") };
+}
+
+function pneumothoraxRiskScore(f) {
+  const p = f.procedure;
+  const s = toNum(f.sizeCm);
+  const em = f.emphysema;
+
+  if (p !== "lung biopsy") {
+    return {
+      score: 1,
+      band: "low",
+      why: "No major pneumothorax-specific penalty for this procedure type.",
+    };
+  }
+
+  let x = 3;
+  const why = ["Lung biopsy has intrinsic pneumothorax risk."];
+
+  if (s !== null) {
+    if (s >= 2.5) {
+      why.push("Target ≥2.5 cm is favorable.");
+    } else if (s >= 2.0) {
+      x += 1;
+      why.push("Target 2.0–2.4 cm is mildly less favorable.");
+    } else if (s >= 1.5) {
+      x += 2;
+      why.push("Target 1.5–1.9 cm increases pneumothorax risk modestly.");
+    } else if (s >= 1.0) {
+      x += 3;
+      why.push("Target 1.0–1.4 cm clearly increases pneumothorax risk.");
+    } else if (s >= 0.8) {
+      x += 4;
+      why.push("Target 0.8–0.9 cm has high pneumothorax risk.");
+    } else {
+      x += 5;
+      why.push("Target <0.8 cm has very high pneumothorax and failure risk.");
+    }
+  }
+
+  if (em === "mild") {
+    x += 1;
+    why.push("Mild emphysema along biopsy tract.");
+  } else if (em === "moderate") {
+    x += 2;
+    why.push("Moderate emphysema along biopsy tract.");
+  } else if (em === "severe") {
+    x += 3;
+    why.push("Severe emphysema along biopsy tract.");
+  } else if (em === "none") {
+    why.push("No emphysema along biopsy tract.");
+  }
+
+  x = clamp(x, 1, 10);
   return { score: x, band: riskBand(x), why: why.join(" ") };
 }
 
@@ -958,7 +1009,7 @@ function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, 
   return [...new Set(items)];
 }
 
-function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps, missing, form, yieldRisk }) {
+function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps, missing, form, yieldRisk, pneumoRisk }) {
   const items = [];
 
   if (labBleed.score >= 7) items.push("Correct the most unfavorable bleeding labs first.");
@@ -969,6 +1020,9 @@ function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps
 
   if (yieldRisk.score >= 7) items.push("Reassess whether small target size justifies biopsy now.");
   else if (yieldRisk.score >= 5) items.push("Confirm that expected diagnostic yield is adequate.");
+
+  if (pneumoRisk.score >= 7) items.push("Reassess pneumothorax risk versus diagnostic value.");
+  else if (pneumoRisk.score >= 5) items.push("Plan around elevated pneumothorax risk.");
 
   if (contrast.score >= 6) items.push("Reduce contrast exposure or use an alternative pathway if feasible.");
   if (recentSurgery.score >= 6) items.push("Reassess timing relative to recent surgery and tissue healing.");
@@ -1043,6 +1097,7 @@ function finalRecommendationEngine({
   cps,
   missing,
   yieldRisk,
+  pneumoRisk,
 }) {
   const reasons = [];
 
@@ -1055,6 +1110,9 @@ function finalRecommendationEngine({
   if (complexity.score >= 8) reasons.push("Technical complexity is high.");
   if (yieldRisk.score >= 8) reasons.push("Diagnostic yield is likely poor and failure risk is high.");
   else if (yieldRisk.score >= 6) reasons.push("Diagnostic yield may be reduced by small target size.");
+
+  if (pneumoRisk.score >= 8) reasons.push("Pneumothorax risk is very high.");
+  else if (pneumoRisk.score >= 6) reasons.push("Pneumothorax risk is meaningfully increased.");
 
   if (tolerance.score >= 8) reasons.push("Procedure tolerance concern is very high.");
   else if (tolerance.score >= 6) reasons.push("Procedure tolerance concern is meaningful.");
@@ -1112,6 +1170,7 @@ function finalRecommendationEngine({
     tolerance.score >= 7 ||
     complexity.score >= 8 ||
     yieldRisk.score >= 7 ||
+    pneumoRisk.score >= 7 ||
     labBleed.score >= 6 ||
     contrast.score >= 6 ||
     recentSurgery.score >= 6 ||
@@ -1165,6 +1224,7 @@ function buildNotes(form, result, helperScore, noteMode) {
     `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
     `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
     `Diagnostic yield / failure risk: ${result.yieldRisk.score}/10 (${result.yieldRisk.band})`,
+    `Pneumothorax risk: ${result.pneumoRisk.score}/10 (${result.pneumoRisk.band})`,
     `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
     `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
     `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
@@ -1190,6 +1250,7 @@ export default function App() {
     const bleed = bleedingScore(form);
     const complexity = complexityScore(form);
     const yieldRisk = diagnosticYieldScore(form);
+    const pneumoRisk = pneumothoraxRiskScore(form);
     const cps = cardiopulmonarySedationAssessment(form);
     const tolerance = toleranceScore(form, complexity.score, cps.score);
     const labBleeding = labBleedingAssessment(form, bleed.score);
@@ -1208,6 +1269,7 @@ export default function App() {
       missing,
       form,
       yieldRisk,
+      pneumoRisk,
     });
     const targets = procedureSpecificTargets(form);
     const pathway = pathwaySummary(form);
@@ -1223,6 +1285,7 @@ export default function App() {
       cps,
       missing,
       yieldRisk,
+      pneumoRisk,
     });
 
     return {
@@ -1230,6 +1293,7 @@ export default function App() {
       bleed,
       complexity,
       yieldRisk,
+      pneumoRisk,
       cps,
       tolerance,
       labBleeding,
@@ -1320,7 +1384,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Lung nodule size now affects bleeding only mildly, while strongly influencing complexity and diagnostic yield / failure risk.
+            Lowered bleeding baselines, kept renal parenchymal biopsy high, and separated small-lung-target risk into yield/failure and pneumothorax rather than bleeding.
           </p>
         </div>
 
@@ -1710,6 +1774,7 @@ export default function App() {
                 <QuickStat title="Proc bleed" value={`${result.bleed.score}/10`} detail={result.bleed.band} />
                 <QuickStat title="Complexity" value={`${result.complexity.score}/10`} detail={result.complexity.band} />
                 <QuickStat title="Yield / failure" value={`${result.yieldRisk.score}/10`} detail={result.yieldRisk.band} />
+                <QuickStat title="Pneumothorax" value={`${result.pneumoRisk.score}/10`} detail={result.pneumoRisk.band} />
                 <QuickStat title="Lab bleed" value={`${result.labBleeding.score}/10`} detail={result.labBleeding.band} />
                 <QuickStat title="Cardiopulm" value={`${result.cps.score}/10`} detail={result.cps.band} />
                 <QuickStat title="Tolerance" value={`${result.tolerance.score}/10`} detail={result.tolerance.band} />
@@ -1764,6 +1829,12 @@ export default function App() {
                 <div style={{ fontSize: 14, fontWeight: 700 }}>Diagnostic yield / failure risk</div>
                 <div style={{ fontSize: 34, fontWeight: 800 }}>{result.yieldRisk.score}/10</div>
                 <div style={{ color: "#64748b" }}>{result.yieldRisk.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Pneumothorax risk</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.pneumoRisk.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.pneumoRisk.why}</div>
               </div>
 
               <div style={{ marginTop: 16 }}>
