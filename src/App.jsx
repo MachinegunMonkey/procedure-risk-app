@@ -282,13 +282,13 @@ function bleedingScore(f) {
     }
     if (em === "mild") {
       x += 1;
-      why.push("Mild emphysema in path.");
+      why.push("Mild emphysema in biopsy tract.");
     } else if (em === "moderate") {
       x += 2;
-      why.push("Moderate emphysema in path.");
+      why.push("Moderate emphysema in biopsy tract.");
     } else if (em === "severe") {
       x += 3;
-      why.push("Severe emphysema in path.");
+      why.push("Severe emphysema in biopsy tract.");
     }
   }
 
@@ -377,10 +377,13 @@ function cardiopulmonarySedationAssessment(f) {
 
   if (f.copdSeverity === "severe") {
     score = Math.max(score, 7);
-    why.push("Severe COPD.");
+    why.push("Severe COPD / emphysema.");
   } else if (f.copdSeverity === "moderate") {
     score = Math.max(score, 5);
-    why.push("Moderate COPD.");
+    why.push("Moderate COPD / emphysema.");
+  } else if (f.copdSeverity === "mild") {
+    score = Math.max(score, 3);
+    why.push("Mild COPD / emphysema.");
   }
 
   if (f.heartFailureSeverity === "severe") {
@@ -389,6 +392,9 @@ function cardiopulmonarySedationAssessment(f) {
   } else if (f.heartFailureSeverity === "moderate") {
     score = Math.max(score, 5);
     why.push("Moderate heart failure.");
+  } else if (f.heartFailureSeverity === "mild") {
+    score = Math.max(score, 3);
+    why.push("Mild heart failure.");
   }
 
   if (f.canLayFlat === "no") {
@@ -814,7 +820,7 @@ function missingDataPrompts(f) {
   if (["lung biopsy", "renal biopsy", "adrenal biopsy", "liver biopsy", "abscess drainage"].includes(f.procedure) && !f.sizeCm) {
     missing.push("target / collection size");
   }
-  if (f.procedure === "lung biopsy" && !f.emphysema) missing.push("emphysema severity in biopsy path");
+  if (f.procedure === "lung biopsy" && !f.emphysema) missing.push("emphysema severity in biopsy tract");
   if (f.contrastNeed !== "no" && !f.guidance) missing.push("guidance modality");
   if (f.contrastNeed !== "no" && !f.intent) missing.push("procedure intent");
   if (f.recentSurgery === "yes" && !f.surgDays) missing.push("days since surgery");
@@ -906,10 +912,10 @@ function procedureSpecificTargets(f) {
   }
 
   if (["renal biopsy", "adrenal biopsy", "liver biopsy", "lung biopsy"].includes(f.procedure)) {
-    items.push("Biopsy pathway: balance diagnostic yield against target size, access difficulty, and whether management will change.");
+    items.push("Biopsy pathway: balance diagnostic yield against target size, access difficulty, bleeding profile, and whether pathology will change management.");
   }
 
-  if (["abscess drainage", "nephrostomy placement", "paracentesis", "thoracentesis", "chest tube placement"].includes(f.procedure)) {
+  if (["abscess drainage", "nephrostomy placement", "paracentesis", "thoracentesis", "chest tube placement", "venous access catheter"].includes(f.procedure)) {
     items.push("Drainage / access pathway: assess whether decompression, source control, or symptom relief justifies urgency.");
   }
 
@@ -921,7 +927,7 @@ function pathwaySummary(f) {
     return {
       title: "Biopsy pathway summary",
       text:
-        "Biopsy decisions should emphasize lesion size, expected diagnostic yield, bleeding profile, pulmonary / sedation tolerance when relevant, and whether pathology will meaningfully change management.",
+        "Biopsy decisions should emphasize lesion size, expected diagnostic yield, bleeding profile, emphysema in the biopsy tract when relevant, pulmonary / sedation tolerance, and whether pathology will meaningfully change management.",
     };
   }
 
@@ -1161,7 +1167,7 @@ export default function App() {
       postOpComplication: "",
       oxygenNeed: "yes",
       copdSeverity: "moderate",
-      heartFailureSeverity: "",
+      heartFailureSeverity: "none",
       canLayFlat: "partially",
       sedationPlan: "moderate sedation",
       airwayRisk: "moderate",
@@ -1194,7 +1200,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added procedure-specific targets, pathway summaries, and concise vs detailed note export.
+            Added procedure-specific targets, pathway summaries, concise vs detailed note export, and explicit none options.
           </p>
         </div>
 
@@ -1275,9 +1281,9 @@ export default function App() {
                   </div>
 
                   <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                    <Field label="Lung emphysema in path">
+                    <Field label="Emphysema severity in biopsy tract">
                       <select value={form.emphysema} onChange={(e) => update("emphysema", e.target.value)} style={inputStyle()}>
-                        <option value="">n/a</option>
+                        <option value="">not entered</option>
                         <option value="none">none</option>
                         <option value="mild">mild</option>
                         <option value="moderate">moderate</option>
@@ -1496,9 +1502,10 @@ export default function App() {
                     <option value="yes">yes</option>
                   </select>
                 </Field>
-                <Field label="COPD severity">
+                <Field label="COPD / emphysema severity">
                   <select value={form.copdSeverity} onChange={(e) => update("copdSeverity", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
+                    <option value="none">none</option>
                     <option value="mild">mild</option>
                     <option value="moderate">moderate</option>
                     <option value="severe">severe</option>
@@ -1507,6 +1514,7 @@ export default function App() {
                 <Field label="Heart failure severity">
                   <select value={form.heartFailureSeverity} onChange={(e) => update("heartFailureSeverity", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
+                    <option value="none">none</option>
                     <option value="mild">mild</option>
                     <option value="moderate">moderate</option>
                     <option value="severe">severe</option>
