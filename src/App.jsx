@@ -268,18 +268,21 @@ function bleedingScore(f) {
     x = 8;
     why.push("Lung biopsy baseline 8.");
 
-    if (s !== null && s >= 2) {
-      x -= 2;
-      why.push("Target ≥2 cm lowers risk.");
-    } else if (s !== null && s < 0.8) {
-      x += 3;
-      why.push("Target <0.8 cm strongly worsens risk-benefit.");
-    } else if (s !== null && s < 1) {
-      x += 2;
-      why.push("Target <1 cm raises risk.");
-    } else if (s !== null && s < 2) {
-      x += 1;
-      why.push("Target <2 cm raises risk.");
+    if (s !== null) {
+      if (s >= 2.5) {
+        x -= 1;
+        why.push("Target ≥2.5 cm is favorable for biopsy.");
+      } else if (s >= 1.5) {
+        why.push("Target 1.5–2.4 cm has no major additional bleeding penalty.");
+      } else if (s >= 1.0) {
+        why.push("Target 1.0–1.4 cm mainly affects technical difficulty and yield rather than bleeding.");
+      } else if (s >= 0.8) {
+        x += 1;
+        why.push("Target 0.8–0.9 cm slightly increases overall procedural risk.");
+      } else {
+        x += 1;
+        why.push("Target <0.8 cm has poor risk-benefit, though size itself does not strongly increase bleeding.");
+      }
     }
 
     if (em === "mild") {
@@ -327,15 +330,24 @@ function complexityScore(f) {
   else if (p === "adrenal biopsy") x = 8;
   else if (p === "lung biopsy") x = 7;
 
-  if (s !== null && s < 0.8 && p !== "abscess drainage" && f.targetType !== "parenchyma") {
-    x += 3;
-    why.push("Sub-0.8 cm target very difficult.");
-  } else if (s !== null && s < 1 && p !== "abscess drainage" && f.targetType !== "parenchyma") {
-    x += 2;
-    why.push("Sub-1 cm target difficult.");
-  } else if (s !== null && s < 2 && p !== "abscess drainage" && f.targetType !== "parenchyma") {
-    x += 1;
-    why.push("Sub-2 cm target less favorable.");
+  if (s !== null && p !== "abscess drainage" && f.targetType !== "parenchyma") {
+    if (s >= 2.5) {
+      why.push("Target ≥2.5 cm is technically favorable.");
+    } else if (s >= 2.0) {
+      why.push("Target 2.0–2.4 cm remains fairly favorable.");
+    } else if (s >= 1.5) {
+      x += 1;
+      why.push("Target 1.5–1.9 cm mildly increases technical difficulty.");
+    } else if (s >= 1.0) {
+      x += 2;
+      why.push("Target 1.0–1.4 cm is clearly more difficult.");
+    } else if (s >= 0.8) {
+      x += 3;
+      why.push("Target 0.8–0.9 cm is technically difficult.");
+    } else {
+      x += 4;
+      why.push("Target <0.8 cm is very technically difficult.");
+    }
   }
 
   if (p === "lung biopsy") {
@@ -367,6 +379,65 @@ function complexityScore(f) {
   }
 
   x = clamp(Math.round(x), 1, 10);
+  return { score: x, band: riskBand(x), why: why.join(" ") };
+}
+
+function diagnosticYieldScore(f) {
+  const p = f.procedure;
+  const s = toNum(f.sizeCm);
+
+  let x = 1;
+  const why = [];
+
+  if (!["lung biopsy", "renal biopsy", "adrenal biopsy", "liver biopsy"].includes(p)) {
+    return {
+      score: 1,
+      band: "low",
+      why: "No major diagnostic-yield penalty entered for this procedure type.",
+    };
+  }
+
+  if (s === null) {
+    return {
+      score: 3,
+      band: "moderate",
+      why: "Target size not entered, so diagnostic-yield uncertainty remains.",
+    };
+  }
+
+  if (p === "lung biopsy") {
+    if (s >= 2.5) {
+      x = 1;
+      why.push("Target ≥2.5 cm usually offers high diagnostic yield.");
+    } else if (s >= 2.0) {
+      x = 2;
+      why.push("Target 2.0–2.4 cm remains favorable for diagnostic yield.");
+    } else if (s >= 1.5) {
+      x = 4;
+      why.push("Target 1.5–1.9 cm has mildly reduced diagnostic yield.");
+    } else if (s >= 1.0) {
+      x = 6;
+      why.push("Target 1.0–1.4 cm has meaningfully reduced yield and higher failure risk.");
+    } else if (s >= 0.8) {
+      x = 7;
+      why.push("Target 0.8–0.9 cm is difficult with lower diagnostic yield.");
+    } else {
+      x = 9;
+      why.push("Target <0.8 cm has poor diagnostic yield and high failure risk.");
+    }
+  } else {
+    if (s >= 2.0) {
+      x = 2;
+      why.push("Larger target generally supports good yield.");
+    } else if (s >= 1.0) {
+      x = 4;
+      why.push("Intermediate target size modestly lowers yield.");
+    } else {
+      x = 6;
+      why.push("Small target lowers diagnostic yield.");
+    }
+  }
+
   return { score: x, band: riskBand(x), why: why.join(" ") };
 }
 
@@ -887,7 +958,7 @@ function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, 
   return [...new Set(items)];
 }
 
-function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps, missing, form }) {
+function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps, missing, form, yieldRisk }) {
   const items = [];
 
   if (labBleed.score >= 7) items.push("Correct the most unfavorable bleeding labs first.");
@@ -895,6 +966,9 @@ function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps
 
   if (thrombotic.score >= 7) items.push("Coordinate antithrombotic interruption with the prescribing team.");
   else if (thrombotic.score >= 5) items.push("Clarify medication hold strategy before the procedure.");
+
+  if (yieldRisk.score >= 7) items.push("Reassess whether small target size justifies biopsy now.");
+  else if (yieldRisk.score >= 5) items.push("Confirm that expected diagnostic yield is adequate.");
 
   if (contrast.score >= 6) items.push("Reduce contrast exposure or use an alternative pathway if feasible.");
   if (recentSurgery.score >= 6) items.push("Reassess timing relative to recent surgery and tissue healing.");
@@ -957,7 +1031,19 @@ function pathwaySummary(f) {
   };
 }
 
-function finalRecommendationEngine({ form, bleed, labBleed, complexity, tolerance, thrombotic, contrast, recentSurgery, cps, missing }) {
+function finalRecommendationEngine({
+  form,
+  bleed,
+  labBleed,
+  complexity,
+  tolerance,
+  thrombotic,
+  contrast,
+  recentSurgery,
+  cps,
+  missing,
+  yieldRisk,
+}) {
   const reasons = [];
 
   if (bleed.score >= 9) reasons.push("Procedure bleeding modifier is very high.");
@@ -967,6 +1053,9 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
   else if (labBleed.score >= 6) reasons.push("Labs add significant bleeding concern.");
 
   if (complexity.score >= 8) reasons.push("Technical complexity is high.");
+  if (yieldRisk.score >= 8) reasons.push("Diagnostic yield is likely poor and failure risk is high.");
+  else if (yieldRisk.score >= 6) reasons.push("Diagnostic yield may be reduced by small target size.");
+
   if (tolerance.score >= 8) reasons.push("Procedure tolerance concern is very high.");
   else if (tolerance.score >= 6) reasons.push("Procedure tolerance concern is meaningful.");
 
@@ -984,8 +1073,13 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
 
   if (missing.length >= 4) reasons.push("Important missing data could materially change the recommendation.");
 
-  if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 0.8) {
-    reasons.push("Very small lung target gives poor risk-benefit.");
+  if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null) {
+    const lungSize = toNum(form.sizeCm);
+    if (lungSize < 0.8) {
+      reasons.push("Very small lung target gives poor risk-benefit.");
+    } else if (lungSize < 1.0) {
+      reasons.push("Small lung target lowers yield and increases technical difficulty.");
+    }
   }
 
   if (form.procedure === "abscess drainage" && form.drainType === "liver abscess" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 2) {
@@ -1001,9 +1095,9 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
   let title = "Proceed";
   let subtitle = "Risk-benefit appears acceptable as entered.";
 
-  if (form.procedure === "lung biopsy" && toNum(form.sizeCm) !== null && toNum(form.sizeCm) < 0.8) {
+  if (form.procedure === "lung biopsy" && yieldRisk.score >= 9) {
     title = "Avoid / use alternative";
-    subtitle = "Very small target gives poor near-term procedural payoff.";
+    subtitle = "Very small target gives poor diagnostic payoff relative to procedural burden.";
   } else if (
     bleed.score >= 9 ||
     tolerance.score >= 9 ||
@@ -1017,6 +1111,7 @@ function finalRecommendationEngine({ form, bleed, labBleed, complexity, toleranc
     bleed.score >= 7 ||
     tolerance.score >= 7 ||
     complexity.score >= 8 ||
+    yieldRisk.score >= 7 ||
     labBleed.score >= 6 ||
     contrast.score >= 6 ||
     recentSurgery.score >= 6 ||
@@ -1069,6 +1164,7 @@ function buildNotes(form, result, helperScore, noteMode) {
     `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
     `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
     `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
+    `Diagnostic yield / failure risk: ${result.yieldRisk.score}/10 (${result.yieldRisk.band})`,
     `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
     `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
     `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
@@ -1093,6 +1189,7 @@ export default function App() {
     const frailty = frailtyUsed(form);
     const bleed = bleedingScore(form);
     const complexity = complexityScore(form);
+    const yieldRisk = diagnosticYieldScore(form);
     const cps = cardiopulmonarySedationAssessment(form);
     const tolerance = toleranceScore(form, complexity.score, cps.score);
     const labBleeding = labBleedingAssessment(form, bleed.score);
@@ -1102,7 +1199,16 @@ export default function App() {
     const missing = missingDataPrompts(form);
     const sirWarnings = sirThresholdWarnings(form, bleed, labBleeding);
     const checklist = optimizationChecklist({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, form, missing });
-    const modifiable = topModifiableItems({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, missing, form });
+    const modifiable = topModifiableItems({
+      labBleed: labBleeding,
+      thrombotic,
+      contrast,
+      recentSurgery,
+      cps,
+      missing,
+      form,
+      yieldRisk,
+    });
     const targets = procedureSpecificTargets(form);
     const pathway = pathwaySummary(form);
     const finalRec = finalRecommendationEngine({
@@ -1116,12 +1222,14 @@ export default function App() {
       recentSurgery,
       cps,
       missing,
+      yieldRisk,
     });
 
     return {
       frailty,
       bleed,
       complexity,
+      yieldRisk,
       cps,
       tolerance,
       labBleeding,
@@ -1149,7 +1257,7 @@ export default function App() {
       ...initial,
       procedure: "lung biopsy",
       targetType: "lung nodule",
-      sizeCm: "0.9",
+      sizeCm: "1.9",
       emphysema: "moderate",
       age: "92",
       bmi: "41",
@@ -1212,7 +1320,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added explicit biopsy-tract emphysema analysis and clear none options.
+            Lung nodule size now affects bleeding only mildly, while strongly influencing complexity and diagnostic yield / failure risk.
           </p>
         </div>
 
@@ -1256,6 +1364,25 @@ export default function App() {
               </div>
 
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <Field label="Emphysema along biopsy tract">
+                  <select value={form.emphysema} onChange={(e) => update("emphysema", e.target.value)} style={inputStyle()}>
+                    <option value="">not entered</option>
+                    <option value="none">none</option>
+                    <option value="mild">mild</option>
+                    <option value="moderate">moderate</option>
+                    <option value="severe">severe</option>
+                  </select>
+                </Field>
+                <Field label="Urgency">
+                  <select value={form.urgency} onChange={(e) => update("urgency", e.target.value)} style={inputStyle()}>
+                    <option value="elective">elective</option>
+                    <option value="urgent">urgent</option>
+                    <option value="emergent">emergent</option>
+                  </select>
+                </Field>
+              </div>
+
+              <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
                 <Field label="Will result change management?">
                   <select value={form.willChangeManagement} onChange={(e) => update("willChangeManagement", e.target.value)} style={inputStyle()}>
                     <option value="yes">yes</option>
@@ -1272,45 +1399,24 @@ export default function App() {
               </div>
 
               {showDetailed && (
-                <>
-                  <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                    <Field label="Drainage subtype">
-                      <select value={form.drainType} onChange={(e) => update("drainType", e.target.value)} style={inputStyle()}>
-                        <option value="">not applicable</option>
-                        <option value="liver abscess">liver abscess</option>
-                        <option value="biliary drainage">biliary drainage</option>
-                        <option value="gallbladder drainage">gallbladder drainage</option>
-                        <option value="other abscess drainage">other abscess drainage</option>
-                      </select>
-                    </Field>
-                    <Field label="Tunneled?">
-                      <select value={form.tunneled} onChange={(e) => update("tunneled", e.target.value)} style={inputStyle()}>
-                        <option value="">n/a</option>
-                        <option value="no">no</option>
-                        <option value="yes">yes</option>
-                      </select>
-                    </Field>
-                  </div>
-
-                  <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                    <Field label="Emphysema along biopsy tract">
-                      <select value={form.emphysema} onChange={(e) => update("emphysema", e.target.value)} style={inputStyle()}>
-                        <option value="">not entered</option>
-                        <option value="none">none</option>
-                        <option value="mild">mild</option>
-                        <option value="moderate">moderate</option>
-                        <option value="severe">severe</option>
-                      </select>
-                    </Field>
-                    <Field label="Urgency">
-                      <select value={form.urgency} onChange={(e) => update("urgency", e.target.value)} style={inputStyle()}>
-                        <option value="elective">elective</option>
-                        <option value="urgent">urgent</option>
-                        <option value="emergent">emergent</option>
-                      </select>
-                    </Field>
-                  </div>
-                </>
+                <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                  <Field label="Drainage subtype">
+                    <select value={form.drainType} onChange={(e) => update("drainType", e.target.value)} style={inputStyle()}>
+                      <option value="">not applicable</option>
+                      <option value="liver abscess">liver abscess</option>
+                      <option value="biliary drainage">biliary drainage</option>
+                      <option value="gallbladder drainage">gallbladder drainage</option>
+                      <option value="other abscess drainage">other abscess drainage</option>
+                    </select>
+                  </Field>
+                  <Field label="Tunneled?">
+                    <select value={form.tunneled} onChange={(e) => update("tunneled", e.target.value)} style={inputStyle()}>
+                      <option value="">n/a</option>
+                      <option value="no">no</option>
+                      <option value="yes">yes</option>
+                    </select>
+                  </Field>
+                </div>
               )}
             </div>
 
@@ -1602,13 +1708,80 @@ export default function App() {
               <h2 style={{ marginTop: 0 }}>Quick output</h2>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}>
                 <QuickStat title="Proc bleed" value={`${result.bleed.score}/10`} detail={result.bleed.band} />
-                <QuickStat title="Lab bleed" value={`${result.labBleeding.score}/10`} detail={result.labBleeding.band} />
                 <QuickStat title="Complexity" value={`${result.complexity.score}/10`} detail={result.complexity.band} />
+                <QuickStat title="Yield / failure" value={`${result.yieldRisk.score}/10`} detail={result.yieldRisk.band} />
+                <QuickStat title="Lab bleed" value={`${result.labBleeding.score}/10`} detail={result.labBleeding.band} />
                 <QuickStat title="Cardiopulm" value={`${result.cps.score}/10`} detail={result.cps.band} />
                 <QuickStat title="Tolerance" value={`${result.tolerance.score}/10`} detail={result.tolerance.band} />
                 <QuickStat title="Thrombotic hold" value={`${result.thrombotic.score}/10`} detail={result.thrombotic.band} />
                 <QuickStat title="Contrast" value={`${result.contrast.score}/10`} detail={result.contrast.band} />
                 <QuickStat title="Recent surgery" value={`${result.recentSurgery.score}/10`} detail={result.recentSurgery.band} />
+              </div>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>Detailed output</h2>
+
+              <div>
+                <strong>SIR category:</strong>
+                <span
+                  style={{
+                    display: "inline-block",
+                    marginLeft: 8,
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    ...badgeStyle(sirBand),
+                    fontSize: 12,
+                    fontWeight: 700,
+                  }}
+                >
+                  {sirBand}
+                </span>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Top reasons</div>
+                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                  {(result.finalRec.reasons.length ? result.finalRec.reasons : ["No dominant concern identified."]).map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure bleeding modifier</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.bleed.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.bleed.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Technical complexity</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.complexity.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.complexity.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Diagnostic yield / failure risk</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.yieldRisk.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.yieldRisk.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Lab-driven bleeding concern</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.labBleeding.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.labBleeding.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Cardiopulmonary / sedation concern</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.cps.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.cps.why}</div>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Procedure tolerance score</div>
+                <div style={{ fontSize: 34, fontWeight: 800 }}>{result.tolerance.score}/10</div>
+                <div style={{ color: "#64748b" }}>{result.tolerance.why}</div>
               </div>
             </div>
 
