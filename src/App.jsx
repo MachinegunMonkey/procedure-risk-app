@@ -90,6 +90,13 @@ function badgeStyle(band) {
   return { background: "#fecaca", color: "#991b1b" };
 }
 
+function actionStyle(action) {
+  if (action === "Proceed") return { background: "#dcfce7", color: "#166534", border: "1px solid #86efac" };
+  if (action === "Proceed after optimization") return { background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" };
+  if (action === "Delay / optimize first") return { background: "#fed7aa", color: "#9a3412", border: "1px solid #fb923c" };
+  return { background: "#fecaca", color: "#991b1b", border: "1px solid #f87171" };
+}
+
 function cardStyle() {
   return {
     background: "#fff",
@@ -365,7 +372,7 @@ function cardiopulmonarySedationAssessment(f) {
   if (f.oxygenNeed === "yes") {
     score = Math.max(score, 5);
     why.push("Baseline oxygen requirement.");
-    suggestions.push("Reassess monitoring and whether sedation level can be reduced.");
+    suggestions.push("Reassess monitoring needs and whether sedation can be minimized.");
   }
 
   if (f.copdSeverity === "severe") {
@@ -387,7 +394,7 @@ function cardiopulmonarySedationAssessment(f) {
   if (f.canLayFlat === "no") {
     score = Math.max(score, 7);
     why.push("Cannot tolerate lying flat.");
-    suggestions.push("Consider whether positioning changes or alternate approach are needed.");
+    suggestions.push("Consider positioning changes or alternate procedural approach.");
   } else if (f.canLayFlat === "partially") {
     score = Math.max(score, 4);
     why.push("Limited tolerance of flat positioning.");
@@ -396,24 +403,25 @@ function cardiopulmonarySedationAssessment(f) {
   if (f.airwayRisk === "high") {
     score = Math.max(score, 8);
     why.push("High airway risk.");
-    suggestions.push("High airway risk should influence sedation planning and monitoring.");
+    suggestions.push("Airway risk should directly affect sedation planning and monitoring.");
   } else if (f.airwayRisk === "moderate") {
     score = Math.max(score, 5);
     why.push("Moderate airway risk.");
   }
 
   if (f.sedationPlan === "moderate sedation") {
-    score = Math.max(score, score + 1, 3);
+    score = Math.max(score, 3);
     why.push("Moderate sedation planned.");
   } else if (f.sedationPlan === "deep sedation / anesthesia") {
-    score = Math.max(score, score + 2, 5);
+    score = Math.max(score, 5);
     why.push("Deep sedation / anesthesia planned.");
     suggestions.push("Consider whether a lower sedation strategy is feasible.");
   }
 
+  score = clamp(score, 1, 10);
   return {
-    score: clamp(score, 1, 10),
-    band: riskBand(clamp(score, 1, 10)),
+    score,
+    band: riskBand(score),
     why: why.length ? why.join(" ") : "No major cardiopulmonary / sedation issue entered.",
     suggestions,
   };
@@ -811,42 +819,39 @@ function missingDataPrompts(f) {
     missing.push("emphysema severity in biopsy path");
   }
 
-  if (f.contrastNeed !== "no" && !f.guidance) {
-    missing.push("guidance modality");
-  }
-
-  if (f.contrastNeed !== "no" && !f.intent) {
-    missing.push("procedure intent");
-  }
-
-  if (f.recentSurgery === "yes" && !f.surgDays) {
-    missing.push("days since surgery");
-  }
-
-  if (f.recentSurgery === "yes" && !f.surgRelation) {
-    missing.push("relation to operative field");
-  }
-
-  if (f.thromDrug && !f.thromIndication) {
-    missing.push("antithrombotic indication");
-  }
-
-  if (f.sedationPlan !== "local only" && !f.airwayRisk) {
-    missing.push("airway risk");
-  }
-
-  if (!f.canLayFlat) {
-    missing.push("ability to lie flat");
-  }
-
-  if (!f.willChangeManagement) {
-    missing.push("whether result will change management");
-  }
+  if (f.contrastNeed !== "no" && !f.guidance) missing.push("guidance modality");
+  if (f.contrastNeed !== "no" && !f.intent) missing.push("procedure intent");
+  if (f.recentSurgery === "yes" && !f.surgDays) missing.push("days since surgery");
+  if (f.recentSurgery === "yes" && !f.surgRelation) missing.push("relation to operative field");
+  if (f.thromDrug && !f.thromIndication) missing.push("antithrombotic indication");
+  if (f.sedationPlan !== "local only" && !f.airwayRisk) missing.push("airway risk");
+  if (!f.canLayFlat) missing.push("ability to lie flat");
+  if (!f.willChangeManagement) missing.push("whether result will change management");
 
   return missing;
 }
 
-function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, cps, form }) {
+function sirThresholdWarnings(f, bleed, labBleed) {
+  const warnings = [];
+  const lowSir = ["skin / dermis procedure", "paracentesis", "thoracentesis", "venous access catheter", "chest tube placement"].includes(f.procedure);
+
+  const platelets = toNum(f.platelets);
+  const inr = toNum(f.inr);
+
+  if (lowSir) {
+    if (platelets !== null && platelets < 20) warnings.push("Very severe thrombocytopenia remains concerning even for lower-SIR-class procedures.");
+    if (inr !== null && inr >= 2.5) warnings.push("Marked INR elevation remains concerning even for lower-SIR-class procedures.");
+  } else {
+    if (platelets !== null && platelets < 50) warnings.push("Higher-SIR-class procedure with platelets <50k deserves strong caution.");
+    if (inr !== null && inr >= 1.8) warnings.push("Higher-SIR-class procedure with INR ≥1.8 deserves strong caution.");
+    if (labBleed.score >= 6) warnings.push("Higher-SIR-class procedure plus unfavorable labs materially increases bleeding concern.");
+  }
+
+  if (bleed.score >= 9) warnings.push("Procedure-specific bleeding modifier is near the top of the scale.");
+  return warnings;
+}
+
+function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, cps, form, missing }) {
   const items = [];
 
   labBleed.suggestions.forEach((x) => items.push(x));
@@ -865,7 +870,34 @@ function optimizationChecklist({ labBleed, thrombotic, contrast, recentSurgery, 
     items.push("Clarify whether the result will materially change management.");
   }
 
+  if (missing.length >= 3) {
+    items.push("Fill in missing decision-critical inputs before finalizing the plan.");
+  }
+
   return [...new Set(items)];
+}
+
+function topModifiableItems({ labBleed, thrombotic, contrast, recentSurgery, cps, missing, form }) {
+  const items = [];
+
+  if (labBleed.score >= 7) items.push("Correct the most unfavorable bleeding labs first.");
+  else if (labBleed.score >= 5) items.push("Optimize labs if feasible before proceeding.");
+
+  if (thrombotic.score >= 7) items.push("Coordinate antithrombotic interruption with the prescribing team.");
+  else if (thrombotic.score >= 5) items.push("Clarify medication hold strategy before the procedure.");
+
+  if (contrast.score >= 6) items.push("Reduce contrast exposure or use an alternative pathway if feasible.");
+
+  if (recentSurgery.score >= 6) items.push("Reassess timing relative to recent surgery and tissue healing.");
+
+  if (cps.score >= 6) items.push("Lower sedation burden or improve cardiopulmonary readiness.");
+
+  if (form.willChangeManagement === "uncertain") items.push("Clarify whether the result will change management.");
+  if (form.willChangeManagement === "no") items.push("Reconsider the need for the procedure entirely.");
+
+  if (missing.length >= 3) items.push("Complete missing decision-critical data.");
+
+  return [...new Set(items)].slice(0, 3);
 }
 
 function finalRecommendationEngine({ form, bleed, labBleed, complexity, tolerance, thrombotic, contrast, recentSurgery, cps, missing }) {
@@ -968,7 +1000,9 @@ export default function App() {
     const contrast = contrastAssessment(form);
     const recentSurgery = recentSurgeryAssessment(form);
     const missing = missingDataPrompts(form);
-    const checklist = optimizationChecklist({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, form });
+    const sirWarnings = sirThresholdWarnings(form, bleed, labBleeding);
+    const checklist = optimizationChecklist({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, form, missing });
+    const modifiable = topModifiableItems({ labBleed: labBleeding, thrombotic, contrast, recentSurgery, cps, missing, form });
     const finalRec = finalRecommendationEngine({
       form,
       bleed,
@@ -993,7 +1027,9 @@ export default function App() {
       contrast,
       recentSurgery,
       missing,
+      sirWarnings,
       checklist,
+      modifiable,
       finalRec,
     };
   }, [form]);
@@ -1001,33 +1037,28 @@ export default function App() {
   const report = useMemo(() => {
     return [
       `Procedure: ${form.procedure}`,
-      `Final recommendation: ${result.finalRec.title}`,
+      `Action: ${result.finalRec.title}`,
       `Summary: ${result.finalRec.subtitle}`,
       `Top reasons:`,
       ...(result.finalRec.reasons.length ? result.finalRec.reasons.map((x) => `- ${x}`) : ["- none"]),
+      `Top modifiable items:`,
+      ...(result.modifiable.length ? result.modifiable.map((x) => `- ${x}`) : ["- none"]),
       `Missing data prompts:`,
       ...(result.missing.length ? result.missing.map((x) => `- ${x}`) : ["- none"]),
+      `SIR / threshold warnings:`,
+      ...(result.sirWarnings.length ? result.sirWarnings.map((x) => `- ${x}`) : ["- none"]),
       `Optimization checklist:`,
       ...(result.checklist.length ? result.checklist.map((x) => `- ${x}`) : ["- none"]),
       `Frailty helper result: ${helperScore}/10 (${frailtyLabel(helperScore)})`,
       `Frailty used in model: ${result.frailty.score}/10 (${result.frailty.source})`,
       `Procedure bleeding modifier: ${result.bleed.score}/10 (${result.bleed.band})`,
-      `Procedure bleeding basis: ${result.bleed.why}`,
       `Lab-driven bleeding concern: ${result.labBleeding.score}/10 (${result.labBleeding.band})`,
-      `Lab bleeding basis: ${result.labBleeding.why}`,
       `Complexity score: ${result.complexity.score}/10 (${result.complexity.band})`,
-      `Complexity basis: ${result.complexity.why}`,
       `Cardiopulmonary / sedation concern: ${result.cps.score}/10 (${result.cps.band})`,
-      `Cardiopulmonary / sedation basis: ${result.cps.why}`,
       `Tolerance score: ${result.tolerance.score}/10 (${result.tolerance.band})`,
-      `Tolerance basis: ${result.tolerance.why}`,
       `Thrombotic hold risk: ${result.thrombotic.score}/10 (${result.thrombotic.band})`,
-      `Thrombotic basis: ${result.thrombotic.why}`,
       `Contrast concern: ${result.contrast.score}/10 (${result.contrast.band})`,
-      `Contrast pathway: ${result.contrast.pathway}`,
-      `Contrast basis: ${result.contrast.why}`,
       `Recent surgery concern: ${result.recentSurgery.score}/10 (${result.recentSurgery.band})`,
-      `Recent surgery basis: ${result.recentSurgery.why}`,
       `Notes: ${form.notes || "none"}`,
     ].join("\n");
   }, [form, result, helperScore]);
@@ -1104,7 +1135,7 @@ export default function App() {
         <div style={{ marginBottom: 16 }}>
           <h1 style={{ margin: 0, fontSize: 28 }}>Procedure Risk App</h1>
           <p style={{ marginTop: 6, color: "#64748b" }}>
-            Added missing-data prompts, optimization checklist, and cardiopulmonary / sedation inputs.
+            Added explicit action box, top modifiable items, and SIR / threshold warnings.
           </p>
         </div>
 
@@ -1124,9 +1155,7 @@ export default function App() {
 
               <Field label="Procedure">
                 <select value={form.procedure} onChange={(e) => update("procedure", e.target.value)} style={inputStyle()}>
-                  {procedures.map((p) => (
-                    <option key={p} value={p}>{p}</option>
-                  ))}
+                  {procedures.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </Field>
 
@@ -1138,7 +1167,6 @@ export default function App() {
                     ))}
                   </select>
                 </Field>
-
                 <Field label="Size (cm)">
                   <input value={form.sizeCm} onChange={(e) => update("sizeCm", e.target.value)} style={inputStyle()} />
                 </Field>
@@ -1152,7 +1180,6 @@ export default function App() {
                     <option value="no">no</option>
                   </select>
                 </Field>
-
                 <Field label="Can delay for optimization?">
                   <select value={form.canDelay} onChange={(e) => update("canDelay", e.target.value)} style={inputStyle()}>
                     <option value="yes">yes</option>
@@ -1173,7 +1200,6 @@ export default function App() {
                         <option value="other abscess drainage">other abscess drainage</option>
                       </select>
                     </Field>
-
                     <Field label="Tunneled?">
                       <select value={form.tunneled} onChange={(e) => update("tunneled", e.target.value)} style={inputStyle()}>
                         <option value="">n/a</option>
@@ -1193,7 +1219,6 @@ export default function App() {
                         <option value="severe">severe</option>
                       </select>
                     </Field>
-
                     <Field label="Urgency">
                       <select value={form.urgency} onChange={(e) => update("urgency", e.target.value)} style={inputStyle()}>
                         <option value="elective">elective</option>
@@ -1209,18 +1234,9 @@ export default function App() {
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Patient factors</h2>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                <Field label="Age">
-                  <input value={form.age} onChange={(e) => update("age", e.target.value)} style={inputStyle()} />
-                </Field>
-
-                <Field label="BMI">
-                  <input value={form.bmi} onChange={(e) => update("bmi", e.target.value)} style={inputStyle()} />
-                </Field>
-
-                <Field label="Albumin">
-                  <input value={form.albumin} onChange={(e) => update("albumin", e.target.value)} style={inputStyle()} />
-                </Field>
-
+                <Field label="Age"><input value={form.age} onChange={(e) => update("age", e.target.value)} style={inputStyle()} /></Field>
+                <Field label="BMI"><input value={form.bmi} onChange={(e) => update("bmi", e.target.value)} style={inputStyle()} /></Field>
+                <Field label="Albumin"><input value={form.albumin} onChange={(e) => update("albumin", e.target.value)} style={inputStyle()} /></Field>
                 {showDetailed && (
                   <Field label="Manual frailty override (optional 0–10)">
                     <input value={form.frailtyOverride} onChange={(e) => update("frailtyOverride", e.target.value)} style={inputStyle()} />
@@ -1232,24 +1248,15 @@ export default function App() {
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Labs</h2>
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-                <Field label="Platelets (k/µL)">
-                  <input value={form.platelets} onChange={(e) => update("platelets", e.target.value)} style={inputStyle()} />
-                </Field>
-                <Field label="INR">
-                  <input value={form.inr} onChange={(e) => update("inr", e.target.value)} style={inputStyle()} />
-                </Field>
-                <Field label="eGFR">
-                  <input value={form.egfr} onChange={(e) => update("egfr", e.target.value)} style={inputStyle()} />
-                </Field>
+                <Field label="Platelets (k/µL)"><input value={form.platelets} onChange={(e) => update("platelets", e.target.value)} style={inputStyle()} /></Field>
+                <Field label="INR"><input value={form.inr} onChange={(e) => update("inr", e.target.value)} style={inputStyle()} /></Field>
+                <Field label="eGFR"><input value={form.egfr} onChange={(e) => update("egfr", e.target.value)} style={inputStyle()} /></Field>
               </div>
             </div>
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Frailty helper</h2>
-              <p style={{ marginTop: 0, color: "#64748b" }}>
-                Auto-calculated continuously. Manual override takes precedence if entered.
-              </p>
-
+              <p style={{ marginTop: 0, color: "#64748b" }}>Auto-calculated continuously. Manual override takes precedence if entered.</p>
               {[
                 ["Baseline independence", "frailtyIndependence", [["0", "Fully independent"], ["2", "Needs help with some IADLs"], ["4", "Needs help with ADLs"], ["6", "Dependent for most daily care"]]],
                 ["Mobility", "frailtyMobility", [["0", "Walks independently"], ["1", "Uses cane / walker"], ["3", "Limited household ambulation"], ["5", "Mostly chair or bed bound"]]],
@@ -1260,13 +1267,10 @@ export default function App() {
               ].map(([label, key, options]) => (
                 <Field key={key} label={label}>
                   <select value={form[key]} onChange={(e) => update(key, e.target.value)} style={inputStyle()}>
-                    {options.map(([v, l]) => (
-                      <option key={v} value={v}>{l}</option>
-                    ))}
+                    {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </Field>
               ))}
-
               <div style={{ border: "1px solid #bfdbfe", background: "#eff6ff", borderRadius: 14, padding: 14 }}>
                 <div><strong>Frailty helper result:</strong> {helperScore}/10</div>
                 <div style={{ marginTop: 4, color: "#475569" }}>{frailtyLabel(helperScore)}</div>
@@ -1277,7 +1281,6 @@ export default function App() {
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Antithrombotics</h2>
-
               <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
                 <Field label="Drug">
                   <select value={form.thromDrug} onChange={(e) => update("thromDrug", e.target.value)} style={inputStyle()}>
@@ -1293,7 +1296,6 @@ export default function App() {
                     <option value="aspirin + clopidogrel">aspirin + clopidogrel</option>
                   </select>
                 </Field>
-
                 <Field label="Indication">
                   <select value={form.thromIndication} onChange={(e) => update("thromIndication", e.target.value)} style={inputStyle()}>
                     <option value="">not specified</option>
@@ -1308,7 +1310,6 @@ export default function App() {
                     <option value="other lower-risk indication">other lower-risk indication</option>
                   </select>
                 </Field>
-
                 <Field label="Timing since event / stent">
                   <select value={form.thromTiming} onChange={(e) => update("thromTiming", e.target.value)} style={inputStyle()}>
                     <option value="">not specified</option>
@@ -1318,7 +1319,6 @@ export default function App() {
                     <option value="> 12 months">&gt; 12 months</option>
                   </select>
                 </Field>
-
                 <Field label="DAPT needed?">
                   <select value={form.dapt} onChange={(e) => update("dapt", e.target.value)} style={inputStyle()}>
                     <option value="">unknown</option>
@@ -1326,7 +1326,6 @@ export default function App() {
                     <option value="no">no</option>
                   </select>
                 </Field>
-
                 <Field label="Last dose (hours ago)">
                   <input value={form.lastDoseHours} onChange={(e) => update("lastDoseHours", e.target.value)} style={inputStyle()} />
                 </Field>
@@ -1343,7 +1342,6 @@ export default function App() {
                     <option value="yes">yes</option>
                   </select>
                 </Field>
-
                 <Field label="Guidance">
                   <select value={form.guidance} onChange={(e) => update("guidance", e.target.value)} style={inputStyle()}>
                     <option value="ultrasound">ultrasound</option>
@@ -1352,7 +1350,6 @@ export default function App() {
                     <option value="mixed">mixed</option>
                   </select>
                 </Field>
-
                 <Field label="Intent">
                   <select value={form.intent} onChange={(e) => update("intent", e.target.value)} style={inputStyle()}>
                     <option value="initial placement">initial placement</option>
@@ -1360,7 +1357,6 @@ export default function App() {
                     <option value="diagnostic check / evaluation">diagnostic check / evaluation</option>
                   </select>
                 </Field>
-
                 <Field label="Contrast reaction">
                   <select value={form.contrastReaction} onChange={(e) => update("contrastReaction", e.target.value)} style={inputStyle()}>
                     <option value="none">none</option>
@@ -1381,11 +1377,7 @@ export default function App() {
                     <option value="yes">yes</option>
                   </select>
                 </Field>
-
-                <Field label="Days since surgery">
-                  <input value={form.surgDays} onChange={(e) => update("surgDays", e.target.value)} style={inputStyle()} />
-                </Field>
-
+                <Field label="Days since surgery"><input value={form.surgDays} onChange={(e) => update("surgDays", e.target.value)} style={inputStyle()} /></Field>
                 <Field label="Relation to planned procedure">
                   <select value={form.surgRelation} onChange={(e) => update("surgRelation", e.target.value)} style={inputStyle()}>
                     <option value="">not specified</option>
@@ -1394,7 +1386,6 @@ export default function App() {
                     <option value="remote region">remote region</option>
                   </select>
                 </Field>
-
                 <Field label="Fresh wound / tract / anastomosis?">
                   <select value={form.freshOperativeSite} onChange={(e) => update("freshOperativeSite", e.target.value)} style={inputStyle()}>
                     <option value="">unknown</option>
@@ -1402,7 +1393,6 @@ export default function App() {
                     <option value="no">no</option>
                   </select>
                 </Field>
-
                 <Field label="Post-op complication">
                   <select value={form.postOpComplication} onChange={(e) => update("postOpComplication", e.target.value)} style={inputStyle()}>
                     <option value="">none / unknown</option>
@@ -1426,7 +1416,6 @@ export default function App() {
                     <option value="deep sedation / anesthesia">deep sedation / anesthesia</option>
                   </select>
                 </Field>
-
                 <Field label="Airway risk">
                   <select value={form.airwayRisk} onChange={(e) => update("airwayRisk", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
@@ -1435,7 +1424,6 @@ export default function App() {
                     <option value="high">high</option>
                   </select>
                 </Field>
-
                 <Field label="Needs oxygen?">
                   <select value={form.oxygenNeed} onChange={(e) => update("oxygenNeed", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
@@ -1443,7 +1431,6 @@ export default function App() {
                     <option value="yes">yes</option>
                   </select>
                 </Field>
-
                 <Field label="COPD severity">
                   <select value={form.copdSeverity} onChange={(e) => update("copdSeverity", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
@@ -1452,7 +1439,6 @@ export default function App() {
                     <option value="severe">severe</option>
                   </select>
                 </Field>
-
                 <Field label="Heart failure severity">
                   <select value={form.heartFailureSeverity} onChange={(e) => update("heartFailureSeverity", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
@@ -1461,7 +1447,6 @@ export default function App() {
                     <option value="severe">severe</option>
                   </select>
                 </Field>
-
                 <Field label="Can lie flat?">
                   <select value={form.canLayFlat} onChange={(e) => update("canLayFlat", e.target.value)} style={inputStyle()}>
                     <option value="">not entered</option>
@@ -1476,23 +1461,22 @@ export default function App() {
             {showDetailed && (
               <div style={cardStyle()}>
                 <h2 style={{ marginTop: 0 }}>Notes</h2>
-                <textarea
-                  value={form.notes}
-                  onChange={(e) => update("notes", e.target.value)}
-                  style={{ ...inputStyle(), minHeight: 120 }}
-                />
+                <textarea value={form.notes} onChange={(e) => update("notes", e.target.value)} style={{ ...inputStyle(), minHeight: 120 }} />
               </div>
             )}
           </div>
 
           <div style={{ display: "grid", gap: 16 }}>
+            <div style={{ ...cardStyle(), ...actionStyle(result.finalRec.title) }}>
+              <h2 style={{ marginTop: 0 }}>Action</h2>
+              <div style={{ fontSize: 30, fontWeight: 800 }}>{result.finalRec.title}</div>
+              <div style={{ marginTop: 8 }}>{result.finalRec.subtitle}</div>
+            </div>
+
             <div style={cardStyle()}>
-              <h2 style={{ marginTop: 0 }}>Final recommendation</h2>
-              <div style={{ fontSize: 28, fontWeight: 800 }}>{result.finalRec.title}</div>
-              <div style={{ marginTop: 6, color: "#64748b" }}>{result.finalRec.subtitle}</div>
-              <div style={{ marginTop: 14, fontSize: 14, fontWeight: 700 }}>Top reasons</div>
+              <h2 style={{ marginTop: 0 }}>Top 3 modifiable items</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
-                {(result.finalRec.reasons.length ? result.finalRec.reasons : ["No dominant concern identified."]).map((x) => (
+                {(result.modifiable.length ? result.modifiable : ["No major modifiable item identified."]).map((x) => (
                   <li key={x}>{x}</li>
                 ))}
               </ul>
@@ -1502,6 +1486,15 @@ export default function App() {
               <h2 style={{ marginTop: 0 }}>Missing data prompts</h2>
               <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
                 {(result.missing.length ? result.missing : ["No major missing data prompt triggered."]).map((x) => (
+                  <li key={x}>{x}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div style={cardStyle()}>
+              <h2 style={{ marginTop: 0 }}>SIR / threshold warnings</h2>
+              <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                {(result.sirWarnings.length ? result.sirWarnings : ["No major threshold warning triggered."]).map((x) => (
                   <li key={x}>{x}</li>
                 ))}
               </ul>
@@ -1532,7 +1525,6 @@ export default function App() {
 
             <div style={cardStyle()}>
               <h2 style={{ marginTop: 0 }}>Detailed output</h2>
-
               <div>
                 <strong>SIR category:</strong>
                 <span
@@ -1548,6 +1540,15 @@ export default function App() {
                 >
                   {sirBand}
                 </span>
+              </div>
+
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>Top reasons</div>
+                <ul style={{ marginTop: 8, paddingLeft: 20, color: "#334155" }}>
+                  {(result.finalRec.reasons.length ? result.finalRec.reasons : ["No dominant concern identified."]).map((x) => (
+                    <li key={x}>{x}</li>
+                  ))}
+                </ul>
               </div>
 
               <div style={{ marginTop: 16 }}>
